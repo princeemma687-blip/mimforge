@@ -37,11 +37,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install FFmpeg (the test gate needs ffprobe/ffmpeg on PATH)
         shell: pwsh
         run: |
           choco install ffmpeg -y
           if ($LASTEXITCODE -ne 0) { throw "choco install ffmpeg failed." }
+
       - name: Create venv and install app + build tools
         shell: pwsh
         run: |
@@ -74,20 +76,53 @@ jobs:
         id: inno
         shell: pwsh
         run: |
-          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          Write-Host "Locating the Inno Setup compiler (ISCC.exe) ..."
+          $innoDirs = @(
+            "C:\Program Files (x86)\Inno Setup 6",
+            "C:\Program Files\Inno Setup 6",
+            (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6"),
+            "C:\ProgramData\chocolatey\bin"
+          )
+          $fromPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if ($fromPath) { Write-Host "Get-Command iscc.exe -> $($fromPath.Source)" } else { Write-Host "Get-Command iscc.exe -> not on PATH" }
+          foreach ($dir in $innoDirs) {
+            $probe = Join-Path $dir "ISCC.exe"
+            Write-Host "Test-Path $probe -> $(Test-Path $probe)"
+          }
+          $iscc = $null
+          if ($fromPath) { $iscc = $fromPath.Source }
           if (-not $iscc) {
-            foreach ($dir in @("C:\Program Files (x86)\Inno Setup 6", "C:\Program Files\Inno Setup 6")) {
-              if (Test-Path (Join-Path $dir "ISCC.exe")) { $iscc = Join-Path $dir "ISCC.exe"; break }
+            foreach ($dir in $innoDirs) {
+              $candidate = Join-Path $dir "ISCC.exe"
+              if (Test-Path $candidate) { $iscc = $candidate; break }
             }
           }
           if (-not $iscc) {
+            $reg = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" -ErrorAction SilentlyContinue
+            if ($reg -and $reg."Inno Setup: App Path") {
+              $candidate = Join-Path $reg."Inno Setup: App Path" "ISCC.exe"
+              Write-Host "Registry App Path probe: $candidate -> $(Test-Path $candidate)"
+              if (Test-Path $candidate) { $iscc = $candidate }
+            }
+          }
+          if (-not $iscc) {
+            Write-Host "ISCC.exe not found yet -- installing Inno Setup with Chocolatey ..."
             choco install innosetup -y
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed." }
-            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-            if (-not (Test-Path $iscc)) { throw "ISCC.exe still not found after choco install." }
+            $fromPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($fromPath) { $iscc = $fromPath.Source }
+            if (-not $iscc) {
+              foreach ($dir in $innoDirs) {
+                $candidate = Join-Path $dir "ISCC.exe"
+                if (Test-Path $candidate) { $iscc = $candidate; break }
+              }
+            }
           }
-          & $iscc setup\mimforge.iss
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed." }
+          if (-not $iscc) { throw "ISCC.exe not found: not on PATH, not in any standard Inno Setup folder, and not after choco install." }
+          Write-Host "Using ISCC: $iscc (file version $((Get-Item $iscc).VersionInfo.FileVersion))"
+          & $iscc "setup\mimforge.iss"
+          $isccExit = $LASTEXITCODE
+          if ($isccExit -ne 0) { throw "Inno Setup build failed with exit code $isccExit." }
           if (-not (Test-Path "dist\Mimforge-Setup-0.0.1.exe")) { throw "Expected dist\Mimforge-Setup-0.0.1.exe was not produced." }
 
       - name: Upload the Windows installer
@@ -104,4 +139,3 @@ jobs:
           name: mimforge-windows-dist-fallback
           path: dist/Mimforge
           if-no-files-found: ignore
-          
