@@ -38,6 +38,16 @@ from .models import (
     VerificationRun,
 )
 from .outcome import evaluate_derived, evaluate_formula, linear_fit
+from .playback import (
+    DEFAULT_STEP_SECONDS,
+    LessonGraph,
+    LessonPackage,
+    LessonReplay,
+    LessonStep,
+    LessonTable,
+    build_lesson,
+    export_html_lesson,
+)
 from .projects import IntegrityError, Project, ProjectError, create_project, list_projects, open_project
 from .simulation import SimResult, simulate_suspension
 from .safety import (
@@ -69,12 +79,18 @@ __all__ = [
     "BomTierVariant",
     "CommandOutcome",
     "CommandResult",
+    "DEFAULT_STEP_SECONDS",
     "Demonstration",
     "DiscrepancyFinding",
     "DiscrepancyReport",
     "GraphSpec",
     "HazardProfile",
     "IntegrityError",
+    "LessonGraph",
+    "LessonPackage",
+    "LessonReplay",
+    "LessonStep",
+    "LessonTable",
     "MachineDesign",
     "MotionCommand",
     "MotionPrimitive",
@@ -99,10 +115,12 @@ __all__ = [
     "VerificationRun",
     "assess_discrepancy",
     "auto_adjust",
+    "build_lesson",
     "check_source",
     "create_project",
     "evaluate_derived",
     "evaluate_formula",
+    "export_html_lesson",
     "export_package",
     "generate_control_panel",
     "generate_controller",

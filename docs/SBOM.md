@@ -9,7 +9,7 @@ stated condition.
 | Component | Purpose | Licence | Cost | ~Size | Notes |
 |---|---|---|---|---|---|
 | PySide6 (Qt for Python) | Desktop shell: authoring UI, playback UI, generated control panels | LGPL-3 ⚠️ | $0 | ~120 MB | Ship Qt DLLs dynamically + include licence notices. (PyQt6 rejected: GPL/commercial.) **Pinned in this VM: 6.12.0 (2026-11-25).** |
-| PyInstaller 6.x | Windows packaging | GPL-2 with bootloader exception ⚠️ | $0 | tool only | Bootloader exception means packaged apps are unaffected. |
+| PyInstaller 6.x | Windows packaging | GPL-2 with bootloader exception ⚠️ | $0 | tool only | Bootloader exception means packaged apps are unaffected. **Pinned in this VM: 6.22.3 (2026-11-25).** Linux smoke build verified 2026-11-25 (onedir, 1.2 GB, app starts headless offscreen). |
 | `cryptography` (Ed25519) | Sign & verify `.tmachine` packages | Apache-2.0/BSD ✅ | $0 | ~5 MB | **Pinned in this VM: 50.0.2 (2026-11-25).** Used instead of PyNaCl for the signing module. |
 | Inno Setup | Windows installer | Free licence ✅ | $0 | tool only | — |
 | FFmpeg (**LGPL build only**) | Video decode/normalise, audio extraction | LGPL-2.1+ ⚠️ | $0 | ~30 MB | **⚠️ HARD REQUIREMENT: use an LGPL-configured build (no `--enable-gpl`, no libx264). A GPL build must never be bundled. Verify the build configuration at install time and ship the licence + source offer.** |

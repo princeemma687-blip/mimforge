@@ -23,6 +23,9 @@ dependencies = [
     "mujoco>=3",
 ]
 
+[project.scripts]
+mimforge = "mimforge.ui.main_window:run"
+
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 

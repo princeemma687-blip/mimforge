@@ -123,10 +123,28 @@ identical table → graph → slope pipeline. Discrepancy engine
 data) and a bounded auto-adjust loop (max 3 iterations, reports
 unfixable instead of silently passing).
 
-Next: Phase 5 (QNX SDP 8.0 install + first real `qcc` cross-build of
-`qnx/` + QEMU run) and Phase 6 (playback, packaging, submission).
+**Phase 6 — playback, packaging, submission (done).** Lesson
+playback: engine-free `LessonPackage` (steps, readings table,
+fitted graph, precomputed replay track) with a self-contained HTML
+export that plays offline in any browser (no external references,
+hostile-text safe) and an in-app step-by-step player wired into
+the Playback panel. Packaging: PyInstaller onedir spec
+(`mimforge.spec`, LGPL libraries shipped as separate files),
+Windows build script + Inno Setup installer script
+(`setup/build-windows.ps1`, `setup/mimforge.iss`), packaging doc
+with honest verification status. Submission: Devpost draft +
+checklist (`docs/SUBMISSION.md`) and the demo-video script
+(`docs/DEMO_VIDEO_SCRIPT.md`). **Phase 5 (QNX) stays parked:**
+the SDP 8.0 install + first real `qcc` cross-build + QEMU run
+need Prince's one-time myQNX sign-in; the C controller, host
+build and 93-check suite are done and in the repo.
+
+Next: Phase 5 unblocks on Prince's sign-in (SDP install → `qcc`
+compile → QEMU run → timing log), then the Windows installer
+test + demo-video recording on his laptop, then submission
+(Prince registers from 10 Dec; internal submit-by 14 Dec).
 The test suite is the acceptance gate for every phase: `pytest` —
-currently 102 tests passing.
+currently 120 tests passing.
 
 ## Build / run (placeholder)
 

@@ -3,8 +3,8 @@
 Layout: a left navigation rail (section plates), a central drafting
 canvas with a blueprint grid and dimension-line header, and a bottom
 status strip with mono readouts. Panels are swapped per section; the
-lesson player is a stub panel in this phase (playback engine lands in
-Phase 6) and the safety panel hosts the monitored-stop control.
+lesson player is the Phase 6 playback engine and the safety panel
+hosts the monitored-stop control.
 
 Runs headless under ``QT_QPA_PLATFORM=offscreen`` for tests.
 """
@@ -98,36 +98,6 @@ def _panel(title: str, lines: list[str]) -> QWidget:
     return widget
 
 
-class PlaybackPanel(QWidget):
-    """Lesson player stub (Phase 6 wires the real playback engine)."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        title = QLabel("■ LESSON PLAYBACK — STUB")
-        title.setFont(mono_font(12, bold=True))
-        layout.addWidget(title)
-        self.steps = QListWidget()
-        self.steps.addItems(
-            ["01  —  (no lesson loaded)", "02  —  open a project to load steps"]
-        )
-        self.steps.setFont(mono_font(10))
-        layout.addWidget(self.steps)
-        controls = QHBoxLayout()
-        self.play_button = QPushButton("▶  PLAY")
-        self.pause_button = QPushButton("❚❚  PAUSE")
-        self.stop_button = QPushButton("■  STOP")
-        for button in (self.play_button, self.pause_button, self.stop_button):
-            button.setFont(mono_font(10, bold=True))
-            controls.addWidget(button)
-        layout.addLayout(controls)
-        self.status = QLabel("STATUS: IDLE — NO LESSON LOADED")
-        self.status.setFont(mono_font(10, bold=True))
-        self.status.setStyleSheet(f"color: {ACCENT};")
-        layout.addWidget(self.status)
-        layout.addStretch(1)
-
-
 class SafetyPanel(QWidget):
     """Safety panel: monitored-stop control + audit readout."""
 
@@ -197,9 +167,11 @@ class MainWindow(QMainWindow):
         # Central drafting canvas with stacked section panels.
         self.canvas = DraftingCanvas("ELEVATION — WORKSPACE")
         self.stack = QStackedWidget()
-        self.playback_panel = PlaybackPanel()
+        # Local imports: ui panels import the design tokens from here.
+        from .playback import LessonPlayer
+
+        self.playback_panel = LessonPlayer()
         self.safety_panel = SafetyPanel()
-        # Local import: authoring.py imports the design tokens from here.
         from .authoring import AuthoringPanel
 
         self.author_panel = AuthoringPanel()
@@ -236,6 +208,11 @@ class MainWindow(QMainWindow):
 
     def current_section(self) -> str:
         return SECTIONS[self.stack.currentIndex()]
+
+    def load_lesson(self, lesson) -> None:
+        """Load a lesson package into the Playback panel and show it."""
+        self.playback_panel.load_lesson(lesson)
+        self.nav.setCurrentRow(SECTIONS.index("Playback"))
 
 
 def run() -> int:
