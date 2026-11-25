@@ -37,7 +37,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
+      - name: Install FFmpeg (the test gate needs ffprobe/ffmpeg on PATH)
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y
+          if ($LASTEXITCODE -ne 0) { throw "choco install ffmpeg failed." }
       - name: Create venv and install app + build tools
         shell: pwsh
         run: |
