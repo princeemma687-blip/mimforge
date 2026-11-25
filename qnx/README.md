@@ -160,6 +160,93 @@ the hackathon target and a high-integrity option; shipped machines
 can run the Linux/Python controller instead. That decision (plan D6)
 belongs to the owner.
 
+## Minimal SDP package set for Phase 5 (research, 2026-11-26)
+
+Prince's download comfort line is **~2 GB** on his own connection;
+above that needs outside Wi-Fi. The full baseline does **not** fit
+that line, so the guided SDP session should install the smallest set
+that still does the Phase 5 job (qcc cross-build + `mkqnximage` +
+QEMU run). Researched from QNX's own docs (QSC User's Guide,
+Command Line chapter; QNX Everywhere resources) and the
+QNX Global Hackathon community tutorial (dev.to, replayed
+2026-11-09). **Nothing in this section was verified by an install —
+exact package IDs and download sizes are only visible after the
+owner's myQNX sign-in, so the session must confirm them live.**
+
+What Phase 5 actually needs (nothing else):
+
+| Need | Where it comes from |
+|---|---|
+| `qcc` cross-compiler (Linux host, x86_64) | SDP host toolchain package |
+| x86_64 target headers + libs (`QNX_TARGET`) | SDP x86_64 target package |
+| `mkqnximage` (builds the QEMU image locally) | SDP host-common tools |
+| QEMU itself (`qemu-system-x86`, ~49 MB) | host OS package manager (`apt`), **not** QNX |
+
+What to **skip** (the big items):
+
+- **Quick Start QEMU image package — 20.0 GB installed.** Skip it;
+  build the image locally with `mkqnximage` (~170 MB image).
+  (dev.to tutorial, step 3.)
+- **Momentics IDE** and any other target architectures (aarch64) —
+  not needed for a `qcc` + QEMU job.
+- Docs/examples if the installer lets them be deselected.
+
+Size facts (all "installed size" as the Software Center lists it;
+download is the compressed `.qpkg`, smaller, but QNX publishes no
+download-size table):
+
+- Full baseline `com.qnx.qnx800`: **~6.4 GB installed** (Build 141,
+  per the dev.to tutorial; one install measured 3.5 GB on disk).
+  Download is "several GB" — **above the 2 GB line**.
+- **Verdict: a sub-2 GB download is NOT proven achievable.** The
+  minimal set is plausibly 1–3 GB, but only the signed-in Software
+  Center shows per-package sizes, so the session must check before
+  downloading. If the minimal set still exceeds ~2 GB, the session
+  needs plugged-in outside Wi-Fi (the 6.4 GB figure is the data
+  problem Prince named on 2026-11-25, ~₦29,000 on PAYG mobile data —
+  never download the SDP on mobile data).
+
+Mechanism (QSC Command Line chapter, qnx.com):
+
+- Install individual packages instead of the whole baseline:
+  `qnxsoftwarecenter_clt -installPackage 'com.qnx.qnx800.<id>' ...`
+  (several IDs in one `-installPackage` call; `-Dbase=qnx800`
+  variable form documented, e.g.
+  `com.qnx.${base}.target.driver.virtio`).
+- After sign-in, enumerate what exists before choosing:
+  `qnxsoftwarecenter_clt -listAccessible` and
+  `-listQuery 'Q:latest()'` (package IDs + versions; sizes shown in
+  the GUI's package list).
+- QSC 2.0.3+ also has an **unmanaged** mode (`-installPackage` /
+  `-downloadPackage` without dependency resolution) for a hand-picked
+  set — use only if the managed install pulls in the full baseline.
+- In the GUI, "Add Installation" shows the baseline's packages and
+  lets components be deselected before download starts.
+
+Package-ID patterns seen in public QNX material (patterns only —
+**confirm the real IDs with `-listQuery` in the session, do not
+guess them into a command**):
+
+- `com.qnx.qnx800.host.<os>.<arch>.<component>` — e.g.
+  `com.qnx.qnx800.host.win.x86_64.rust` (QNX CI blog).
+- `com.qnx.qnx800.target.<...>` — e.g.
+  `com.qnx.qnx800.target.driver.virtio` (CLT doc example).
+
+Local check done 2026-11-26: `qnxsoftwarecenter_clt -list` without
+sign-in fails (`allrepos` is null) — package enumeration genuinely
+needs the owner's sign-in, confirming this stays a live-session step.
+
+In-session checklist (Prince's guided session, after sign-in):
+
+1. `-syncLicenseKeys`, then `-listAccessible` / GUI package list.
+2. Note the per-package sizes; pick host toolchain + x86_64 target
+   + host-common (`mkqnximage`) only; deselect IDE, aarch64, docs,
+   Quick Start image.
+3. If the total download is ≤ ~2 GB, proceed on his connection;
+   otherwise stop and move the session to outside Wi-Fi.
+4. `source ~/qnx800/qnxsdp-env.sh`; `which qcc mkqnximage` must
+   resolve; then `make -f Makefile.qnx` + the QEMU run in this repo.
+
 ## Files
 
 ```
