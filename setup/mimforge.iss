@@ -51,4 +51,4 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\Mimforge.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\Mimforge.exe"; Tasks: desktopicon
 
 [Run]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\Mimforge.exe"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Mimforge.exe"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
