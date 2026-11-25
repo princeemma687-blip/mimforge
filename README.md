@@ -104,9 +104,29 @@ the teacher authoring editor (approve / reject / edit each draft step).
 controller in C under `qnx/` (host build + 93-check test suite); the
 QEMU / SDP cross-build step is still to be run on the Windows host.
 
-Next: Phase 3 (gantry CAD + BOM) and Phase 4 (codegen, control panel,
-MuJoCo simulation, discrepancy scoring). The test suite is the
-acceptance gate for every phase: `pytest` — currently 54 tests passing.
+**Phase 3 — gantry CAD + BOM (done).** Parametric bench gantry via
+build123d (STEP re-import verified), three-tier bill of materials
+(Prototype / Professional / Industrial, NGN estimates from an
+editable parts DB), and the teacher-signed risk-assessment gate that
+blocks export until signed.
+
+**Phase 4 — codegen, simulation & discrepancy (done).** Template
+codegen: a step-sequenced controller that only calls the safety
+kernel's primitive API, plus a generated PySide6 control panel from
+the template's control list — both checked by a static AST
+allow-list checker that fails seeded malicious samples (network,
+direct motor command, OS command, dynamic execution). MuJoCo
+simulation of the gantry + suspended load built from the same
+parameters as the CAD, recovering the constant within ±3% through the
+identical table → graph → slope pipeline. Discrepancy engine
+(trajectory shape + outcome comparison, diagnoses from template
+data) and a bounded auto-adjust loop (max 3 iterations, reports
+unfixable instead of silently passing).
+
+Next: Phase 5 (QNX SDP 8.0 install + first real `qcc` cross-build of
+`qnx/` + QEMU run) and Phase 6 (playback, packaging, submission).
+The test suite is the acceptance gate for every phase: `pytest` —
+currently 102 tests passing.
 
 ## Build / run (placeholder)
 

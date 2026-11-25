@@ -1,0 +1,28 @@
+<!-- MuJoCo model of one platform from the parametric library plus a
+     suspended load on a hinge joint. Built from GantryParameters by
+     mimforge.simulation; every number here is a placeholder filled at
+     build time, so this file carries no practical-specific values.
+
+     Coordinates: metres, Z up from the bench surface. The pivot sits at
+     the top of the uprights (pivot_z); the load hangs length_m below it
+     and swings in the X-Z plane (hinge axis Y). The uprights and beam
+     are static geometry from the same parameters as the CAD model.
+-->
+<mujoco model="mimforge_platform">
+  <option timestep="0.001" gravity="0 0 {accel_z}"/>
+  <worldbody>
+    <!-- uprights -->
+    <geom type="box" size="{section_half} {section_half} {upright_half_height}"
+          pos="{upright_x} 0 {upright_half_height}" rgba="0.4 0.45 0.5 1"/>
+    <geom type="box" size="{section_half} {section_half} {upright_half_height}"
+          pos="-{upright_x} 0 {upright_half_height}" rgba="0.4 0.45 0.5 1"/>
+    <!-- top beam -->
+    <geom type="box" size="{beam_half} {section_half} {section_half}"
+          pos="0 0 {beam_z}" rgba="0.4 0.45 0.5 1"/>
+    <!-- suspended load: hinge at the pivot, mass at distance length_m -->
+    <body pos="0 0 {pivot_z}">
+      <joint type="hinge" axis="0 1 0"/>
+      <geom type="sphere" size="0.02" mass="1.0" pos="0 0 -{length_m}"/>
+    </body>
+  </worldbody>
+</mujoco>
