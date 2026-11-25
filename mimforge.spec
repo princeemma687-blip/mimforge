@@ -10,6 +10,7 @@ their libraries ship as separate files next to the executable with
 the licence notices (see docs/SBOM.md), not baked into one blob.
 """
 
+import base64
 import sys
 from pathlib import Path
 
@@ -21,6 +22,20 @@ SPEC_DIR = Path(SPECPATH)  # noqa: F821 - provided by PyInstaller
 # other platforms so a smoke-test build can print diagnostics.
 WINDOWED = sys.platform == "win32"
 
+# The app icon binaries (mimforge.ico, icon_256.png) travel as base64
+# text (assets/branding/*.b64) because the snapshot route that
+# publishes this repository carries UTF-8 text only. Materialise the
+# real files before Analysis/EXE reference them below; where they
+# already exist (a local checkout) they are refreshed with identical
+# bytes. The vector source is assets/branding/logo_c.svg.
+_BRANDING = SPEC_DIR / "assets" / "branding"
+for _icon_name in ("mimforge.ico", "icon_256.png"):
+    _b64_file = _BRANDING / f"{_icon_name}.b64"
+    if _b64_file.is_file():
+        (_BRANDING / _icon_name).write_bytes(
+            base64.decodebytes(_b64_file.read_bytes())
+        )
+
 datas = [
     (str(SPEC_DIR / "src" / "mimforge" / "templates" / "*.json"),
      "mimforge/templates"),
@@ -28,6 +43,11 @@ datas = [
      "mimforge/templates"),
     (str(SPEC_DIR / "LICENSE"), "."),
     (str(SPEC_DIR / "docs" / "SBOM.md"), "docs"),
+    # App icon (logo C "Machine Frame", picked by the owner 2026-11-25):
+    # bundled so the frozen app can set its window icon at runtime; the
+    # matching mimforge.ico is the EXE icon below.
+    (str(SPEC_DIR / "assets" / "branding" / "icon_256.png"),
+     "assets/branding"),
 ]
 
 binaries = []
@@ -110,6 +130,7 @@ exe = EXE(  # noqa: F821 - PyInstaller DSL
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(SPEC_DIR / "assets" / "branding" / "mimforge.ico"),
 )
 
 coll = COLLECT(  # noqa: F821 - PyInstaller DSL

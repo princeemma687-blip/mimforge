@@ -22,6 +22,9 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
+; App icon: logo C "Machine Frame" (owner's pick, 2026-11-25). The .ico
+; sits in assets\branding at the repo root, one level up from setup\.
+SetupIconFile=..\assets\branding\mimforge.ico
 OutputDir=..\dist
 OutputBaseFilename=Mimforge-Setup-{#MyAppVersion}
 Compression=lzma

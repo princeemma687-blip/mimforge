@@ -11,8 +11,11 @@ Runs headless under ``QT_QPA_PLATFORM=offscreen`` for tests.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPainter, QPen
+from PySide6.QtGui import QFont, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -39,6 +42,27 @@ STOP_RED = "#E5484D"  # safety-signal exception: the E-stop only
 MONO_FAMILY = "Consolas, 'JetBrains Mono', 'DejaVu Sans Mono', monospace"
 
 SECTIONS = ["Projects", "Author", "Design", "Simulate", "Safety", "Playback"]
+
+
+def _icon_png_path() -> Path:
+    """Locate the bundled app icon (logo C, "Machine Frame").
+
+    Frozen (PyInstaller): mimforge.spec ships
+    ``assets/branding/icon_256.png`` under the bundle root
+    (``sys._MEIPASS``). Dev: the same path relative to the repository
+    root -- this file lives at ``src/mimforge/ui/main_window.py``.
+    """
+    rel = Path("assets") / "branding" / "icon_256.png"
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root is not None:
+        return Path(bundle_root) / rel
+    return Path(__file__).resolve().parents[3] / rel
+
+
+def app_icon() -> QIcon:
+    """The application icon; an empty icon if the file is missing."""
+    path = _icon_png_path()
+    return QIcon(str(path)) if path.is_file() else QIcon()
 
 
 def mono_font(point_size: int = 10, bold: bool = False) -> QFont:
@@ -129,6 +153,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("MIMFORGE — TEACHING MACHINE STUDIO  ·  v0.0.1")
+        self.setWindowIcon(app_icon())
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(
             f"QMainWindow {{ background: {BG}; color: {TEXT}; }}"
@@ -218,6 +243,7 @@ class MainWindow(QMainWindow):
 def run() -> int:
     """Launch the desktop shell (entry point for the packaged app)."""
     app = QApplication([])
+    app.setWindowIcon(app_icon())
     window = MainWindow()
     window.show()
     return app.exec()
