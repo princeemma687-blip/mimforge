@@ -2,11 +2,35 @@
 zero-crossing series, the readings-table build, and the slope/constant
 recovery. Both the video-extraction path and the simulation path use
 these exact functions -- that identity is the point of the proof.
+
+The generic period functions live in the product core
+(``mimforge.perception``) and are re-exported here; only the demo's own
+constants and table shape stay in this experiment module.
 """
 
 from __future__ import annotations
 
 import numpy as np
+
+from mimforge.perception import (
+    period_from_crossings,
+    split_period_estimates,
+    upward_crossing_times,
+)
+
+__all__ = [
+    "G_TRUTH",
+    "LENGTHS_M",
+    "AMPLITUDE_DEG",
+    "N_OSCILLATIONS_TIMED",
+    "small_angle_period",
+    "upward_crossing_times",
+    "period_from_crossings",
+    "split_period_estimates",
+    "build_table_rows",
+    "recover_from_table",
+    "percent_error",
+]
 
 G_TRUTH = 9.81  # m/s^2 -- the value the synthetic world is built with
 LENGTHS_M = [0.90, 0.80, 0.70, 0.60, 0.50]  # the template's length set
@@ -17,35 +41,6 @@ N_OSCILLATIONS_TIMED = 20  # the practical times 20 oscillations per row
 def small_angle_period(length_m: float, g: float = G_TRUTH) -> float:
     """T = 2*pi*sqrt(L/g) -- the formula the practical itself uses."""
     return 2.0 * np.pi * np.sqrt(length_m / g)
-
-
-def upward_crossing_times(t: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Times at which y crosses zero going upward, linearly interpolated
-    between samples so the estimate is not quantised to the sample grid."""
-    idx = np.where((y[:-1] < 0.0) & (y[1:] >= 0.0))[0]
-    if idx.size == 0:
-        return np.empty(0)
-    frac = -y[idx] / (y[idx + 1] - y[idx])
-    return t[idx] + frac * (t[idx + 1] - t[idx])
-
-
-def period_from_crossings(crossings: np.ndarray) -> tuple[float, np.ndarray]:
-    """Mean period and the individual intervals between upward crossings."""
-    intervals = np.diff(crossings)
-    if intervals.size == 0:
-        raise ValueError("fewer than two upward crossings: no period")
-    return float(intervals.mean()), intervals
-
-
-def split_period_estimates(intervals: np.ndarray) -> tuple[float, float]:
-    """Two period estimates from the first and second halves of the
-    crossing intervals -- the extraction analogue of timing the same run
-    twice (t1 and t2 in the readings table)."""
-    if intervals.size < 2:
-        only = float(intervals.mean())
-        return only, only
-    half = intervals.size // 2
-    return float(intervals[:half].mean()), float(intervals[half:].mean())
 
 
 def build_table_rows(lengths_m, period_pairs) -> list[dict]:

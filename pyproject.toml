@@ -11,6 +11,14 @@ requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.6",
     "cryptography>=42",
+    "opencv-python-headless>=5",
+    "faster-whisper>=1.2",
+    # av is faster-whisper's audio decoder: 13.1.0 is the newest version
+    # whose cp312 wheel installs here AND that still accepts the
+    # `metadata_errors` argument faster-whisper 1.2.1 passes (19.x removed
+    # it; 14.4.0 ships no cp312 wheel on this index).
+    "av==13.1.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -24,3 +32,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: tests that download a model or take over a minute",
+]

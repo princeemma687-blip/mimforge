@@ -199,15 +199,16 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.playback_panel = PlaybackPanel()
         self.safety_panel = SafetyPanel()
+        # Local import: authoring.py imports the design tokens from here.
+        from .authoring import AuthoringPanel
+
+        self.author_panel = AuthoringPanel()
         panels: dict[str, QWidget] = {
             "Projects": _panel(
                 "PROJECTS",
                 ["No project open.", "Create or open a project to begin."],
             ),
-            "Author": _panel(
-                "AUTHOR — DEMONSTRATION STEPS",
-                ["Import a demonstration video to draft steps.", "Teacher approves every step."],
-            ),
+            "Author": self.author_panel,
             "Design": _panel(
                 "DESIGN — MACHINE + BOM",
                 ["Platform: bench gantry (parameterised).", "BOM tiers: Prototype / Professional / Industrial."],

@@ -83,12 +83,30 @@ found.
 
 ## Status
 
-**Phase 0 — foundation package.** This repository currently contains the
-scope freeze, software bill of materials, teacher-validation and filming
-protocols, the generic core schema as typed Python data models, the first
-template (as data), a test suite, and a Windows toolchain setup script.
-The application itself is not built yet; phases and their acceptance tests
-are defined in the project plan.
+**Phase 0 — foundation package (done).** Scope freeze, software bill of
+materials, teacher-validation and filming protocols, the generic core
+schema as typed Python data models, the first template (as data), and a
+Windows toolchain setup script.
+
+**Phase 1 — skeleton (done).** Project storage (SQLite + content-hash
+manifest), Ed25519-signed `.tmachine` packages, safety kernel (speed /
+force caps, monitored stop, E-stop), Firebase metadata sync behind a
+feature flag (offline-first), and the PySide6 mission-control shell.
+
+**Phase 2 — perception & structuring (done).** Video ingest (ffprobe) +
+colour-prompt object tracking with coverage reporting, periodic-motion
+analysis, local faster-whisper narration (with SRT / manual transcript
+fallbacks), transcript-to-template step segmentation with an offline
+drafting fallback (Muse Spark advisor optional, never required), and
+the teacher authoring editor (approve / reject / edit each draft step).
+
+**Phase 5 (QNX) — controller (done, in parallel).** The timing
+controller in C under `qnx/` (host build + 93-check test suite); the
+QEMU / SDP cross-build step is still to be run on the Windows host.
+
+Next: Phase 3 (gantry CAD + BOM) and Phase 4 (codegen, control panel,
+MuJoCo simulation, discrepancy scoring). The test suite is the
+acceptance gate for every phase: `pytest` — currently 54 tests passing.
 
 ## Build / run (placeholder)
 
