@@ -11,8 +11,13 @@ plain board, fixed camera. Expectation: high coverage; period analysis is
 only indicative here because the peg-block makes the swing non-sinusoidal.
 
 Clip 2: commons_pendelgesetz_timed_run_trim.mp4 -- known 0.5 m length,
-lesson ground truth ~14.2 s per 10 oscillations. Expectation: period
-recovered near 1.42 s if the small dark bob tracks.
+lesson ground truth ~14.2 s per 10 oscillations. CORRECTED 2026-11-25:
+the swing IS in this trim (121-134 s absolute; string tilted at 122 s,
+vertical at 128 s) -- the earlier "at rest" verdict was an averaging
+artefact. But the small dark lead bob is untrackable by the current
+tracker family (colour prompt fails: bob BGR ~ board BGR; motion
+probe in pendelgesetz_motion.py returns only a noisy 0.94 s artefact
+vs 1.42 s ground truth). Documented tracker gap; SAM-2 is the named fix.
 """
 
 from __future__ import annotations
@@ -46,13 +51,22 @@ YELLOW_PROMPT = ColourPrompt(
 # Lead-grey bob in the Pendelgesetz trim: NOT usable as a colour prompt --
 # the board itself falls in the same BGR band (~180k px/frame), so a
 # whole-frame grey prompt "tracks" the board's centroid, not the bob.
-# Verified 2026-11-25: the trim shows the apparatus AT REST (frame-diff
-# in the swing region: mean 0.7% changed pixels; the string hangs
-# vertical at the same x in every sampled frame). The lesson's ground
-# truth (1.42 s per swing) is written on the board, but the swing itself
-# is not in this 45 s trim -- it must be earlier in the original video.
-# Clip 2 is therefore recorded as an INVALID period test input, not a
-# tracker failure. See run_pendelgesetz_rest_check() below.
+# CORRECTION 2026-11-25 (evening): the earlier "apparatus AT REST"
+# verdict was WRONG. A full-video scan found sustained ~1.85%/s change
+# at 121-134 s absolute time (11-24 s into the trim) -- the real timed
+# run. The earlier rest-check averaged the whole 45 s trim (most of it
+# genuinely at rest), which masked the 14 s of swing, and a single frame
+# at the equilibrium crossing looks identical to rest. Frames prove it:
+# string tilted at 122 s, vertical at 128 s; the on-screen counter runs
+# 01.00 -> 10.00 in real time, so the video is not sped up. The swing
+# IS in the trim -- but the bob is untrackable by the current tracker
+# family: colour prompt fails (bob BGR ~ board BGR), and the
+# motion-difference probe in experiments/pendelgesetz_motion.py recovers
+# only a noisy track (period artefact 0.94 s vs 1.42 s ground truth;
+# frame-to-frame diff finds nothing -- bob grey ~59 vs board ~63).
+# PRODUCT GAP: dark-on-dark loads need the SAM-2 segmentation path the
+# plan already names for hard cases. See run_pendelgesetz_rest_check()
+# below, which now reports the corrected finding.
 
 
 def report_clip(path: Path, prompt: ColourPrompt, label: str) -> None:
@@ -87,14 +101,19 @@ def report_clip(path: Path, prompt: ColourPrompt, label: str) -> None:
 
 
 def report_pendelgesetz_rest_check(path: Path) -> None:
-    """Clip 2 is NOT a period test: prove the apparatus is at rest.
+    """Clip 2, CORRECTED 2026-11-25 (evening).
 
-    Frame-difference in the swing region (x 280..400, y 0..430) sampled
-    once per second: a swinging load would change a large fraction of
-    those pixels every second. What we actually see is ~0.7% mean --
-    the string hangs vertical at the same x in every sampled frame.
-    The lesson's ground truth (1.42 s per swing) is written on the
-    board, but the swing itself is not in this trim.
+    The 2026-11-25 afternoon verdict ("apparatus AT REST in this trim")
+    was wrong: it averaged the whole 45 s trim, most of which IS at rest,
+    and so masked the 14 s of real swing at 121-134 s absolute time
+    (11-24 s into the trim). A full-video scan of the original shows
+    sustained ~1.85%/s change across 121-134 s, and frames at 122 s
+    (string tilted) vs 128 s (string vertical) prove the swing visually.
+    The swing is therefore IN this trim -- but the bob is untrackable by
+    the current tracker family (see experiments/pendelgesetz_motion.py):
+    colour prompt fails (bob BGR ~ board BGR) and the motion-difference
+    probe returns only a noisy artefact (0.94 s vs 1.42 s ground truth).
+    The clip stays a documented tracker gap, not a period test pass.
     """
     import cv2
 
@@ -119,11 +138,17 @@ def report_pendelgesetz_rest_check(path: Path) -> None:
     print(f"    {path.name}: {idx} frames, {fps:.0f} fps")
     print(
         f"    swing-region change per 1 s sample: mean {mean_change:.1%}, "
-        f"max {max(diffs):.1%} -> apparatus AT REST in this trim"
+        f"max {max(diffs):.1%} (mean over the whole trim -- mostly rest, "
+        "so it hides the 14 s of swing at 121-134 s absolute time)"
     )
     print(
-        "    VERDICT: invalid period test input (no swing to recover); "
-        "the real swing must be earlier in the original video."
+        "    CORRECTED VERDICT: the swing IS in this trim (121-134 s; "
+        "string tilted at 122 s, vertical at 128 s; counter 01.00->"
+        "10.00 in real time). The earlier 'at rest' verdict averaged "
+        "it away. The bob is still untrackable by the current tracker "
+        "family -- see experiments/pendelgesetz_motion.py (motion "
+        "probe: 0.94 s artefact vs 1.42 s ground truth). Documented "
+        "tracker gap; SAM-2 path is the named fix."
     )
     print()
 

@@ -58,12 +58,12 @@ def extract_audio(
     Raises TranscriptionError if the file has no audio track (a silent
     demonstration is valid -- the caller then uses a manual transcript).
     """
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise EngineUnavailable("ffmpeg not found on PATH")
     video_path, out_path = Path(video_path), Path(out_path)
     if not video_path.is_file():
         raise TranscriptionError(f"video file not found: {video_path}")
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise EngineUnavailable("ffmpeg not found on PATH")
     proc = subprocess.run(
         [
             ffmpeg,

@@ -49,12 +49,12 @@ class VideoInfo:
 
 def probe_video(path: str | Path) -> VideoInfo:
     """Read container metadata with ffprobe (no decode)."""
-    ffprobe = shutil.which("ffprobe")
-    if ffprobe is None:
-        raise EngineUnavailable("ffprobe not found on PATH")
     path = Path(path)
     if not path.is_file():
         raise IngestError(f"video file not found: {path}")
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        raise EngineUnavailable("ffprobe not found on PATH")
     proc = subprocess.run(
         [
             ffprobe,

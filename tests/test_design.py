@@ -71,7 +71,7 @@ def test_all_nine_parts_listed_for_bom_tracing():
     ]
 
 
-def test_invalid_parameters_rejected():
+def test_invalid_parameters_rejected(tmp_path):
     with pytest.raises(ValueError):
         build_gantry(GantryParameters(span_mm=50.0))  # narrower than sections
     with pytest.raises(ValueError):
@@ -79,4 +79,4 @@ def test_invalid_parameters_rejected():
     with pytest.raises(ValueError):
         build_gantry(GantryParameters(suspension_range_mm=(1200.0, 1500.0)))
     with pytest.raises(ValueError):
-        export_cad(build_gantry(GantryParameters()), "/tmp/x.dxf")
+        export_cad(build_gantry(GantryParameters()), tmp_path / "x.dxf")
