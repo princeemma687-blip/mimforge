@@ -17,7 +17,7 @@ mention in a README.
 | Host platform layer + test harness | **Built and passing: 93 checks, 0 failures** |
 | QNX platform layer (`src/platform_qnx.c`) | Written against the QNX 8.0 API, **NOT compiled or run** |
 | QNX entry point (`src/main_qnx.c`) | Written, **NOT compiled or run** |
-| QNX SDP 8.0 download / install | **NOT done** — requires a myQNX account registration, which is deliberately left to the project owner |
+| QNX SDP 8.0 download / install | **NOT done** — the free non-commercial SDP 8.0 licence is deployed to the owner's myQNX account, and QNX Software Center 2.0.4 is installed on this VM at `~/qnx/qnxsoftwarecenter` (headless install 2026-11-25, `qnxsoftwarecenter_clt` 2.0.4 verified working). The SDP install itself needs the owner's myQNX sign-in (password) — his step, not attempted here. Ready command, once signed in: `qnxsoftwarecenter_clt -syncLicenseKeys -myqnx.user=<user> -myqnx.password=<password>` then `qnxsoftwarecenter_clt -cleanInstall -destination ~/qnx800 -installBaseline com.qnx.qnx800 -myqnx.user=<user> -myqnx.password=<password>` (baseline id from QNX's own unattended-install docs). |
 | Devpost / hackathon registration | **NOT done** — owner's step, untouched here |
 | QEMU run of the QNX image | **NOT done** — happens after the SDP install |
 
