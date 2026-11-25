@@ -1,0 +1,103 @@
+# Mimforge — Windows installer build (CI twin of setup/build-windows.ps1)
+#
+# Runs the SAME steps as the laptop script, in the same order:
+#   1. venv + pip install -e . + pip install pyinstaller pytest
+#   2. FULL pytest suite as a gate -- the build stops if tests fail
+#   3. PyInstaller with mimforge.spec -> dist\Mimforge\Mimforge.exe
+#   4. Inno Setup (iscc) with setup\mimforge.iss -> dist\Mimforge-Setup-0.0.1.exe
+#   5. The installer .exe is uploaded as the `mimforge-windows-installer`
+#      artifact. If the Inno step fails but the PyInstaller dist exists,
+#      the dist folder is uploaded instead as `mimforge-windows-dist-fallback`.
+#
+# Triggers: manual (workflow_dispatch) and any push that changes THIS
+# file only -- ordinary code pushes do not rebuild the installer.
+# A CI build is NOT an install test: the clean-profile install test
+# still happens on a real Windows machine (see docs/PACKAGING.md).
+
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-windows.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv and install app + build tools
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "venv creation failed." }
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
+          .\.venv\Scripts\python.exe -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "pip install -e . failed." }
+          .\.venv\Scripts\python.exe -m pip install pyinstaller pytest
+          if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller pytest failed." }
+
+      - name: Run the FULL pytest suite (build gate)
+        shell: pwsh
+        env:
+          # Same headless Qt platform the suite is verified with locally.
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          .\.venv\Scripts\python.exe -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed -- build stopped. Fix the failures before packaging." }
+
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m PyInstaller --noconfirm mimforge.spec
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
+          if (-not (Test-Path "dist\Mimforge\Mimforge.exe")) { throw "Expected dist\Mimforge\Mimforge.exe was not produced." }
+
+      - name: Build installer with Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            foreach ($dir in @("C:\Program Files (x86)\Inno Setup 6", "C:\Program Files\Inno Setup 6")) {
+              if (Test-Path (Join-Path $dir "ISCC.exe")) { $iscc = Join-Path $dir "ISCC.exe"; break }
+            }
+          }
+          if (-not $iscc) {
+            choco install innosetup -y
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed." }
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { throw "ISCC.exe still not found after choco install." }
+          }
+          & $iscc setup\mimforge.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed." }
+          if (-not (Test-Path "dist\Mimforge-Setup-0.0.1.exe")) { throw "Expected dist\Mimforge-Setup-0.0.1.exe was not produced." }
+
+      - name: Upload the Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimforge-windows-installer
+          path: dist/Mimforge-Setup-0.0.1.exe
+          if-no-files-found: error
+
+      - name: Upload the PyInstaller dist as fallback (installer step failed)
+        if: ${{ failure() && steps.inno.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimforge-windows-dist-fallback
+          path: dist/Mimforge
+          if-no-files-found: ignore
+          
