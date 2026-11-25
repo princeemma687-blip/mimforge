@@ -19,6 +19,7 @@ dependencies = [
     # it; 14.4.0 ships no cp312 wheel on this index).
     "av==13.1.0",
     "numpy>=1.26",
+    "build123d>=0.13",
 ]
 
 [project.optional-dependencies]
