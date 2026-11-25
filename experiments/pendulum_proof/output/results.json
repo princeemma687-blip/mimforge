@@ -1,0 +1,234 @@
+{
+  "experiment": "pendulum_proof",
+  "synthetic": true,
+  "ground_truth_value": 9.81,
+  "expected_value_from_template": 9.81,
+  "band_percent_from_template": 5.0,
+  "observation_spec_column_keys": [
+    "L_cm",
+    "L_m",
+    "t1_s",
+    "t2_s",
+    "mean_t_s",
+    "T_s",
+    "T2_s2"
+  ],
+  "video_table": [
+    {
+      "L_cm": 90.0,
+      "L_m": 0.9,
+      "t1_s": 38.1,
+      "t2_s": 38.1,
+      "mean_t_s": 38.1,
+      "T_s": 1.91,
+      "T2_s2": 3.63
+    },
+    {
+      "L_cm": 80.0,
+      "L_m": 0.8,
+      "t1_s": 35.9,
+      "t2_s": 35.9,
+      "mean_t_s": 35.9,
+      "T_s": 1.8,
+      "T2_s2": 3.23
+    },
+    {
+      "L_cm": 70.0,
+      "L_m": 0.7,
+      "t1_s": 33.6,
+      "t2_s": 33.6,
+      "mean_t_s": 33.6,
+      "T_s": 1.68,
+      "T2_s2": 2.82
+    },
+    {
+      "L_cm": 60.0,
+      "L_m": 0.6,
+      "t1_s": 31.1,
+      "t2_s": 31.1,
+      "mean_t_s": 31.1,
+      "T_s": 1.56,
+      "T2_s2": 2.42
+    },
+    {
+      "L_cm": 50.0,
+      "L_m": 0.5,
+      "t1_s": 28.4,
+      "t2_s": 28.4,
+      "mean_t_s": 28.4,
+      "T_s": 1.42,
+      "T2_s2": 2.02
+    }
+  ],
+  "video_fit": {
+    "slope_s2_per_m": 4.030000000000002,
+    "intercept_s2": 0.0029999999999992394,
+    "recovered_value": 9.796133400584965,
+    "residuals_percent": [
+      -3.6701587590914256e-14,
+      0.09296560272695321,
+      -0.1416430594901008,
+      -0.0413052457662261,
+      0.09910802775023685
+    ],
+    "max_abs_residual_percent": 0.1416430594901008
+  },
+  "sim_table": [
+    {
+      "L_cm": 90.0,
+      "L_m": 0.9,
+      "t1_s": 38.1,
+      "t2_s": 38.1,
+      "mean_t_s": 38.1,
+      "T_s": 1.91,
+      "T2_s2": 3.63
+    },
+    {
+      "L_cm": 80.0,
+      "L_m": 0.8,
+      "t1_s": 35.9,
+      "t2_s": 35.9,
+      "mean_t_s": 35.9,
+      "T_s": 1.8,
+      "T2_s2": 3.23
+    },
+    {
+      "L_cm": 70.0,
+      "L_m": 0.7,
+      "t1_s": 33.6,
+      "t2_s": 33.6,
+      "mean_t_s": 33.6,
+      "T_s": 1.68,
+      "T2_s2": 2.82
+    },
+    {
+      "L_cm": 60.0,
+      "L_m": 0.6,
+      "t1_s": 31.1,
+      "t2_s": 31.1,
+      "mean_t_s": 31.1,
+      "T_s": 1.56,
+      "T2_s2": 2.42
+    },
+    {
+      "L_cm": 50.0,
+      "L_m": 0.5,
+      "t1_s": 28.4,
+      "t2_s": 28.4,
+      "mean_t_s": 28.4,
+      "T_s": 1.42,
+      "T2_s2": 2.02
+    }
+  ],
+  "sim_fit": {
+    "slope_s2_per_m": 4.030000000000002,
+    "intercept_s2": 0.0029999999999992394,
+    "recovered_value": 9.796133400584965,
+    "residuals_percent": [
+      -3.6701587590914256e-14,
+      0.09296560272695321,
+      -0.1416430594901008,
+      -0.0413052457662261,
+      0.09910802775023685
+    ],
+    "max_abs_residual_percent": 0.1416430594901008
+  },
+  "sim_engine": "mujoco",
+  "sim_engine_note": "",
+  "ground_truth_records": [
+    {
+      "length_m": 0.9,
+      "video_file": "demo_L090cm.mp4",
+      "n_frames": 656,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.9031219547658238,
+      "true_period_s": 1.905443444725821
+    },
+    {
+      "length_m": 0.8,
+      "video_file": "demo_L080cm.mp4",
+      "n_frames": 619,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.7942805861865494,
+      "true_period_s": 1.7964693077514269
+    },
+    {
+      "length_m": 0.7,
+      "video_file": "demo_L070cm.mp4",
+      "n_frames": 579,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.6783958023124947,
+      "true_period_s": 1.680443164100661
+    },
+    {
+      "length_m": 0.6,
+      "video_file": "demo_L060cm.mp4",
+      "n_frames": 536,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.5538925691547856,
+      "true_period_s": 1.555788057302803
+    },
+    {
+      "length_m": 0.5,
+      "video_file": "demo_L050cm.mp4",
+      "n_frames": 489,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.4185033534428875,
+      "true_period_s": 1.4202336897048604
+    }
+  ],
+  "demonstrations": [
+    {
+      "id": "synthetic-demo-L90cm",
+      "practical_id": "waec-physics-pendulum-g",
+      "video_hash": "4f40669b9dec23e6a6280f298cedc8c9e41ebea72b98f7e1d84698923be140c7",
+      "n_track_points": 656
+    },
+    {
+      "id": "synthetic-demo-L80cm",
+      "practical_id": "waec-physics-pendulum-g",
+      "video_hash": "f094928bdcf4524936d0c3918c21ec6fa6d600ed7ebd4687a1efea5442f6e2b5",
+      "n_track_points": 619
+    },
+    {
+      "id": "synthetic-demo-L70cm",
+      "practical_id": "waec-physics-pendulum-g",
+      "video_hash": "c84590ceaba5fe31a426c0b13c9497a6209aa02046f05d4335dfc8ad62a6ba71",
+      "n_track_points": 579
+    },
+    {
+      "id": "synthetic-demo-L60cm",
+      "practical_id": "waec-physics-pendulum-g",
+      "video_hash": "d17d05bd62d7d8356942ee1f50f8b3c05773f6aa282e0019135e27ad6fe20349",
+      "n_track_points": 536
+    },
+    {
+      "id": "synthetic-demo-L50cm",
+      "practical_id": "waec-physics-pendulum-g",
+      "video_hash": "3f9f80701c874e7b0a6e3ee34b80daf6df9441bfe06587c8510e9a0f06fab38f",
+      "n_track_points": 489
+    }
+  ],
+  "verification_run": {
+    "id": "pendulum-proof-run-001",
+    "practical_id": "waec-physics-pendulum-g",
+    "sim_trajectory_ref": "simulation engine: mujoco",
+    "discrepancy_metrics": {
+      "video_recovered_percent_error": -0.14135167599424156,
+      "sim_recovered_percent_error": -0.14135167599424156,
+      "video_vs_sim_percent_diff": 0.0,
+      "video_max_period_error_percent": 0.026371858931535208,
+      "sim_max_period_error_percent": 0.03191441576976536,
+      "video_max_table_residual_percent": 0.1416430594901008,
+      "sim_max_table_residual_percent": 0.1416430594901008
+    },
+    "outcome_result": "video path recovered 9.796 (-0.14% vs expected 9.81); simulation path recovered 9.796 (-0.14%); band +/-5.0% -> PASS",
+    "passed": true,
+    "adjustments": []
+  }
+}

@@ -1,0 +1,36 @@
+# Makefile.qnx - QNX SDP 8.0 target build for the Mimforge timing
+# controller. NOT RUN YET: QNX SDP 8.0 is not installed on the dev
+# machine (it requires a myQNX account, which is the project owner's
+# step). This file is committed so the Phase 5 target build is a
+# documented, repeatable step rather than a future invention.
+#
+# Prerequisites (owner, on the Windows/Linux build host):
+#   1. Install QNX SDP 8.0 via QNX Everywhere (free non-commercial
+#      licence) and source its environment:
+#           source <sdp>/qnxsdp-env.sh
+#   2. Confirm the compiler target exists:  qcc -V  (expect
+#      gcc_ntox86_64 among the targets for the QEMU x86_64 image).
+#
+# Build:   make -f Makefile.qnx
+# Run:     boot the QNX 8.0 x86_64 QEMU image, transfer the binary,
+#          then:  ./mimforge_controller_qnx 1.905
+#          (argument = period in seconds for the simulated-gate
+#          timing test T5.2; the run times 20 cycles and prints the
+#          timing log the host app ingests.)
+
+QCC      ?= qcc
+TARGET   ?= gcc_ntox86_64
+CFLAGS   ?= -V$(TARGET) -Wall -Wextra -O2 -std=c99 -Iinclude
+
+BIN      := mimforge_controller_qnx
+SRC      := src/timing_controller.c src/platform_qnx.c src/main_qnx.c
+
+all: $(BIN)
+
+$(BIN): $(SRC) include/timing_controller.h include/platform.h
+	$(QCC) $(CFLAGS) -o $@ $(SRC)
+
+clean:
+	rm -f $(BIN)
+
+.PHONY: all clean
