@@ -15,7 +15,7 @@ drive the whole lesson without waiting on the real timer.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -106,6 +106,10 @@ class LessonPlayer(QWidget):
     """Step-by-step lesson player following the design rule: dark
     charcoal, one electric accent, mono type, mission-control plates."""
 
+    #: Emitted when the teacher asks to export the loaded lesson;
+    #: the shell owns the save dialog and the file write.
+    export_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._lesson: LessonPackage | None = None
@@ -159,12 +163,19 @@ class LessonPlayer(QWidget):
         self.play_button = QPushButton("▶  PLAY")
         self.pause_button = QPushButton("❚❚  PAUSE")
         self.stop_button = QPushButton("■  STOP")
-        for button in (self.play_button, self.pause_button, self.stop_button):
+        self.export_button = QPushButton("⇩  EXPORT HTML")
+        for button in (
+            self.play_button,
+            self.pause_button,
+            self.stop_button,
+            self.export_button,
+        ):
             button.setFont(mono_font(10, bold=True))
             controls.addWidget(button)
         self.play_button.clicked.connect(self.play)
         self.pause_button.clicked.connect(self.pause)
         self.stop_button.clicked.connect(self.stop)
+        self.export_button.clicked.connect(self._on_export)
         layout.addLayout(controls)
 
         self.progress_label = QLabel("STEP —/—")
@@ -264,6 +275,14 @@ class LessonPlayer(QWidget):
         self.status.setText(
             f"STATUS: PLAYING — STEP {self._index + 1}/{len(self._lesson.steps)}"
         )
+
+    def _on_export(self) -> None:
+        if self._lesson is None:
+            self.status.setText(
+                "STATUS: NO LESSON LOADED — NOTHING TO EXPORT"
+            )
+            return
+        self.export_requested.emit()
 
     # ---------------------------------------------------------- helpers
 

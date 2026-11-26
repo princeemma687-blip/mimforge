@@ -10,6 +10,7 @@ caller persists it (e.g. as a project record) via ``current_draft()``.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -28,6 +29,10 @@ from .main_window import ACCENT, MONO_FAMILY, MUTED, PANEL_BG, TEXT, mono_font
 class AuthoringPanel(QWidget):
     """Step-by-step authoring editor following the design rule: dark
     charcoal, one electric accent, mono type, mission-control plates."""
+
+    #: Emitted when the teacher asks to build the lesson package
+    #: from the approved draft. The shell owns the assembly.
+    build_lesson_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,8 +87,14 @@ class AuthoringPanel(QWidget):
         self.reject_button = QPushButton("✕  REJECT STEP")
         self.reject_button.setFont(mono_font(10, bold=True))
         self.reject_button.clicked.connect(self._reject)
+        self.build_lesson_button = QPushButton("▣  BUILD LESSON")
+        self.build_lesson_button.setFont(mono_font(10, bold=True))
+        self.build_lesson_button.clicked.connect(
+            self.build_lesson_requested.emit
+        )
         buttons.addWidget(self.approve_button)
         buttons.addWidget(self.reject_button)
+        buttons.addWidget(self.build_lesson_button)
         right.addLayout(buttons)
         body.addLayout(right, stretch=1)
         layout.addLayout(body, stretch=1)

@@ -128,3 +128,28 @@ def template_from_data(data: dict[str, Any]) -> PracticalTemplate:
 
 def load_template(name: str = "pendulum") -> PracticalTemplate:
     return template_from_data(load_template_data(name))
+
+
+def list_templates() -> list[dict[str, str]]:
+    """The template registry: every bundled template data file,
+    described by name + the practical it carries. Any JSON file in
+    this folder that parses and names a practical joins the
+    registry -- the shell offers all of them, not a fixed one."""
+    registry: list[dict[str, str]] = []
+    for path in sorted(_HERE.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        practical = data.get("practical") or {}
+        if not data.get("template_id") or not practical.get("title"):
+            continue
+        registry.append(
+            {
+                "name": path.stem,
+                "template_id": data["template_id"],
+                "title": practical["title"],
+                "subject": practical.get("subject", ""),
+            }
+        )
+    return registry
