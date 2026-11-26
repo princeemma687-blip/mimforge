@@ -46,6 +46,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -78,6 +79,59 @@ FFMPEG_SHA256 = {
 WHISPER_REPO = "Systran/faster-whisper-base"
 WHISPER_REVISION = "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
 WHISPER_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+
+# Piper voice (Stage 2): en_US-ljspeech-medium from rhasspy/piper-voices.
+# Licence chain, verified line-by-line on 2026-11-26 before this pin
+# was made (evidence in docs/SBOM.md): the voices repo is MIT; the
+# voice's MODEL_CARD states its dataset is the LJ Speech dataset,
+# "License: public domain", and the card says the voice was trained
+# from scratch (no base voice, so no inherited chain). The card is
+# staged beside the model so the evidence travels with the bundle.
+# SHA-256 pins recorded at first fetch (2026-11-26) and verified on
+# every fetch, exactly like the FFmpeg archives.
+PIPER_VOICE = "en_US-ljspeech-medium"
+PIPER_BASE = (
+    "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+    "en/en_US/ljspeech/medium"
+)
+PIPER_FILES = {
+    "model.onnx": (
+        "en_US-ljspeech-medium.onnx",
+        "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+    ),
+    "model.onnx.json": (
+        "en_US-ljspeech-medium.onnx.json",
+        "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+    ),
+    "MODEL_CARD": ("MODEL_CARD", None),  # hash recorded in the manifest
+}
+
+# Kokoro-82M (Stage 2 quality voice): SHIPS because its measured
+# pre-render gate passed on 2026-11-26 (see docs/SBOM.md): a full
+# 9-step lesson pre-rendered in 66.8 s wall / 657 MB peak RSS on the
+# build VM (1.5 shared vCPUs), against plan limits of 180 s (Dell
+# E7240) / 360 s (ZenBook) and 1.5 GB -- and its Whisper round-trip
+# intelligibility scored 0.935 vs Piper's 0.802 (first session:
+# 50.8 s / 701 MB, 0.947 / 0.789 -- same verdict). Model: hexgrad/
+# Kokoro-82M, Apache-2.0; ONNX conversion by the onnx-community.
+# One voice only (af_heart). SHA-256 pins recorded at first fetch.
+KOKORO_BASE = (
+    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main"
+)
+KOKORO_FILES = {
+    "model_fp16.onnx": (
+        "onnx/model_fp16.onnx",
+        "ba4527a874b42b21e35f468c10d326fdff3c7fc8cac1f85e9eb6c0dfc35c334a",
+    ),
+    "tokenizer.json": (
+        "tokenizer.json",
+        "77a02c8e164413299b4b4c403b14f8e0e1c1b727db4d46a09d6327b861060a34",
+    ),
+    "voices/af_heart.bin": (
+        "voices/af_heart.bin",
+        "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+    ),
+}
 
 LGPL_URL = "https://www.gnu.org/licenses/lgpl-3.0.txt"
 
@@ -269,6 +323,178 @@ def stage_firebase_config() -> None:
 # -------------------------------------------------------- sample clip
 
 
+def _gruut_espeak_lexicon_db() -> Path | None:
+    """Locate the gruut-lang-en espeak lexicon (packaging-time data
+    source only -- its SQLite file is read directly; the app never
+    imports gruut). Installed via setup/build-windows.ps1 alongside
+    the other packaging tools."""
+    import sysconfig
+
+    purelib = Path(sysconfig.get_paths()["purelib"])
+    candidate = purelib / "gruut_lang_en" / "espeak" / "lexicon.db"
+    return candidate if candidate.is_file() else None
+
+
+def _convert_lexicon(lexicon_db: Path, id_map: dict) -> dict[str, str]:
+    """Convert the espeak lexicon into {word: "phoneme phoneme ..."}
+    keeping only phonemes the bundled voice actually knows (checked
+    against its phoneme_id_map). Verified 2026-11-26: 124,389 words,
+    100% coverage for en_US-ljspeech-medium."""
+    con = sqlite3.connect(f"file:{lexicon_db}?mode=ro", uri=True)
+    try:
+        rows = con.execute(
+            "SELECT word, phonemes FROM word_phonemes ORDER BY word, id"
+        ).fetchall()
+    finally:
+        con.close()
+    best: dict[str, str] = {}
+    for word, phonemes in rows:
+        best.setdefault(word, phonemes)
+
+    def convert(ph_str: str) -> str | None:
+        out: list[str] = []
+        for tok in ph_str.split():
+            while tok and tok[0] in ("ˈ", "ˌ"):
+                out.append(tok[0])
+                tok = tok[1:]
+            if not tok:
+                continue
+            if tok in id_map:
+                out.append(tok)
+                continue
+            base, length = tok, False
+            if base.endswith("ː"):
+                base, length = base[:-1], True
+            if base in id_map:
+                out.append(base)
+                if length and "ː" in id_map:
+                    out.append("ː")
+                continue
+            if all(ch in id_map for ch in base):
+                out.extend(base)
+                continue
+            return None
+        return " ".join(out)
+
+    lexicon: dict[str, str] = {}
+    for word, ph_str in best.items():
+        converted = convert(ph_str)
+        if converted:
+            lexicon[word] = converted
+    return lexicon
+
+
+def stage_piper() -> None:
+    """Stage the Piper voice + its bundled phoneme lexicon.
+
+    The synthesis engine itself is Mimforge's own code
+    (``src/mimforge/speech.py``) driving the voice model on the
+    already-bundled ONNX Runtime -- no piper binary and no
+    espeak-ng (GPL) anywhere. The lexicon is converted here, at
+    packaging time, from the MIT-licensed gruut-lang-en data."""
+    target = BUNDLED / "models" / "piper" / PIPER_VOICE
+    target.mkdir(parents=True, exist_ok=True)
+    for staged_name, (remote_name, pin) in PIPER_FILES.items():
+        dest = target / staged_name
+        if not dest.is_file():
+            print(f"  downloading piper {staged_name} ...")
+            download(PIPER_BASE + "/" + remote_name, dest)
+        if pin:
+            digest = sha256_of(dest)
+            if digest != pin:
+                raise SystemExit(
+                    f"piper {staged_name}: SHA-256 mismatch "
+                    f"(expected {pin[:12]}..., got {digest[:12]}...); "
+                    "refusing to bundle an unverified voice file"
+                )
+            print(f"  piper {staged_name}: SHA-256 verified")
+        else:
+            print(f"  piper {staged_name}: staged (hash in manifest)")
+
+    config = json.loads((target / "model.onnx.json").read_text(encoding="utf-8"))
+    lexicon_db = _gruut_espeak_lexicon_db()
+    if lexicon_db is None:
+        raise SystemExit(
+            "gruut-lang-en is not installed in this packaging environment; "
+            "its espeak lexicon.db is the packaging-time data source for "
+            "the bundled phoneme lexicon. Install it (packaging tool "
+            "only, never shipped): pip install gruut-lang-en"
+        )
+    lexicon = _convert_lexicon(lexicon_db, config["phoneme_id_map"])
+    if len(lexicon) < 100_000:
+        raise SystemExit(
+            f"lexicon conversion produced only {len(lexicon)} words; "
+            "refusing to stage a gutted lexicon"
+        )
+    (target / "lexicon.json").write_text(
+        json.dumps(lexicon, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    print(
+        f"  piper lexicon: {len(lexicon)} words converted from "
+        "gruut-lang-en espeak data (MIT)"
+    )
+
+    (BUNDLED / "licenses").mkdir(parents=True, exist_ok=True)
+    (BUNDLED / "licenses" / "PIPER-VOICE-NOTICE.txt").write_text(
+        "Piper voice: en_US-ljspeech-medium\n"
+        "Source: rhasspy/piper-voices (MIT licence).\n"
+        "Dataset: the LJ Speech Dataset -- public domain, per the\n"
+        "voice's MODEL_CARD (staged beside the model in\n"
+        "models/piper/en_US-ljspeech-medium/MODEL_CARD) and the\n"
+        "dataset's home at keithito.com/LJ-Speech-Dataset. The card\n"
+        "states the voice was trained from scratch, so no other\n"
+        "voice's licence chain applies.\n"
+        "Synthesis: Mimforge's own implementation of the Piper 1.2.0\n"
+        "(MIT) model interface, running on ONNX Runtime (MIT).\n"
+        "Phoneme lexicon: converted at packaging time from the\n"
+        "gruut-lang-en espeak lexicon (MIT, rhasspy/gruut); the app\n"
+        "ships only the converted word list, not gruut itself.\n"
+        "No espeak-ng code or binaries (GPL) are bundled anywhere.\n",
+        encoding="utf-8",
+    )
+    print(f"  piper voice staged -> {target}")
+
+
+def stage_kokoro() -> None:
+    """Stage Kokoro-82M fp16 + tokenizer + the af_heart voice.
+
+    Only staged because the Stage 2 measured gate passed (numbers
+    in the KOKORO_FILES comment above and docs/SBOM.md). The app
+    drives the model directly on ONNX Runtime; the kokoro-onnx
+    wrapper package is not shipped."""
+    target = BUNDLED / "models" / "kokoro"
+    target.mkdir(parents=True, exist_ok=True)
+    for staged_name, (remote_name, pin) in KOKORO_FILES.items():
+        dest = target / staged_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not dest.is_file():
+            print(f"  downloading kokoro {staged_name} ...")
+            download(KOKORO_BASE + "/" + remote_name, dest)
+        digest = sha256_of(dest)
+        if digest != pin:
+            raise SystemExit(
+                f"kokoro {staged_name}: SHA-256 mismatch "
+                f"(expected {pin[:12]}..., got {digest[:12]}...); "
+                "refusing to bundle an unverified model file"
+            )
+        print(f"  kokoro {staged_name}: SHA-256 verified")
+    (BUNDLED / "licenses").mkdir(parents=True, exist_ok=True)
+    (BUNDLED / "licenses" / "KOKORO-NOTICE.txt").write_text(
+        "Kokoro-82M text-to-speech model (fp16 ONNX) and the\n"
+        "af_heart voice style vector.\n"
+        "Model: hexgrad/Kokoro-82M -- Apache License 2.0.\n"
+        "ONNX conversion: onnx-community/Kokoro-82M-v1.0-ONNX.\n"
+        "Inference: Mimforge's own code on ONNX Runtime (MIT);\n"
+        "the kokoro-onnx wrapper package is not bundled.\n"
+        "Measured gate (2026-11-26): full 9-step lesson pre-render\n"
+        "66.8 s / 657 MB peak on the build VM; Whisper round-trip\n"
+        "intelligibility 0.935. See docs/SBOM.md.\n",
+        encoding="utf-8",
+    )
+    print(f"  kokoro staged -> {target}")
+
+
 def stage_sample_clip() -> None:
     """Generate the self-test sample clip with the staged ffmpeg:
     a bright red disc swinging sinusoidally on a dark field, with
@@ -347,6 +573,8 @@ def main() -> int:
     stage_licences()
     stage_sam(args.workdir)
     stage_whisper(args.workdir)
+    stage_piper()
+    stage_kokoro()
     stage_firebase_config()
     stage_sample_clip()
     write_manifest()

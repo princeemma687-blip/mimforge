@@ -37,6 +37,10 @@ Write-Host "Installing app + build tools ..."
 pip install --upgrade pip
 pip install -e .
 pip install pyinstaller pytest
+# Packaging-time DATA SOURCE only (never shipped, never imported by
+# the app): its espeak lexicon.db is converted into the bundled
+# phoneme lexicon by setup/fetch_bundled_assets.py (Stage 2).
+pip install gruut-lang-en
 
 Write-Host "Staging bundled runtime assets (ffmpeg, models, config) ..."
 python setup\fetch_bundled_assets.py --platform win64

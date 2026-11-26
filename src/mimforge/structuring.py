@@ -22,7 +22,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from .models import PracticalTemplate
 from .narration import Transcript
@@ -73,6 +73,11 @@ class DraftStep:
     # deliberately NOT serialised -- the stored record keeps the
     # spans, and the words live in the project's transcript record.
     spoken_text: str = ""
+    # The teacher's own recorded voice for this step (Stage 2), as a
+    # mimforge.speech.StepAudio dict. Serialised: when the lesson is
+    # built, this recording replaces the app's synthetic voice for
+    # the step and is labelled as the teacher's voice everywhere.
+    voice_audio: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +92,7 @@ class DraftStep:
             "safety_notes": self.safety_notes,
             "check_question": self.check_question,
             "advisor_used": self.advisor_used,
+            "voice_audio": self.voice_audio,
         }
 
     @classmethod
@@ -103,6 +109,7 @@ class DraftStep:
             safety_notes=list(data.get("safety_notes", [])),
             check_question=data.get("check_question", ""),
             advisor_used=data.get("advisor_used", "offline"),
+            voice_audio=data.get("voice_audio"),
         )
 
 

@@ -502,6 +502,18 @@ class MainWindow(QMainWindow):
         self.author_panel.draft_changed.connect(
             self._persist_current_draft
         )
+        self.author_panel.voice_attach_requested.connect(
+            self.attach_teacher_voice
+        )
+        self.author_panel.voice_record_requested.connect(
+            self.toggle_teacher_recording
+        )
+        self.author_panel.voice_remove_requested.connect(
+            self.remove_teacher_voice
+        )
+        self._recorder = None
+        self._capture_session = None
+        self._record_path: Path | None = None
         self.projects_panel = ProjectsPanel(self)
         self.design_panel = DesignPanel(self)
         self.simulate_panel = SimulatePanel(self)
@@ -1177,6 +1189,174 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- lesson
 
+    # ------------------------------------------------------- teacher voice
+
+    def _author_step(self):
+        """The draft step currently selected in the Author panel."""
+        draft = self.author_panel.current_draft()
+        index = self.author_panel.current_step_index()
+        if draft is None or index is None or not 0 <= index < len(draft.steps):
+            return None
+        return draft.steps[index]
+
+    def attach_teacher_voice(self):
+        """Attach the teacher's own recorded audio file to the
+        selected step (Stage 2). The recording replaces the app's
+        synthetic voice for that step at lesson build time and is
+        labelled as the teacher's voice everywhere."""
+        from .. import speech as speech_module
+
+        step = self._author_step()
+        if step is None:
+            self.author_panel.status_label.setText(
+                "STATUS: SELECT A STEP FIRST"
+            )
+            return
+        chosen, _selected = QFileDialog.getOpenFileName(
+            self,
+            "Attach your voice recording for this step",
+            str(_documents_dir()),
+            "Audio files (*.wav *.mp3 *.m4a *.ogg *.flac);;All files (*)",
+        )
+        if not chosen:
+            return
+        try:
+            wav = speech_module.convert_to_wav(
+                Path(chosen).read_bytes(), Path(chosen).suffix
+            )
+            audio = speech_module.StepAudio.teacher(wav)
+        except speech_module.SpeechUnavailable as exc:
+            self.author_panel.status_label.setText(f"STATUS: {exc}")
+            return
+        except OSError:
+            self.author_panel.status_label.setText(
+                "STATUS: THAT FILE COULD NOT BE READ"
+            )
+            return
+        step.voice_audio = audio.to_dict()
+        self.author_panel.refresh_voice_label()
+        self._persist_current_draft()
+        self.author_panel.status_label.setText(
+            f"STATUS: TEACHER VOICE ATTACHED — STEP {step.order} "
+            f"— {audio.duration_s:.1f} s"
+        )
+
+    def remove_teacher_voice(self):
+        step = self._author_step()
+        if step is None:
+            self.author_panel.status_label.setText(
+                "STATUS: SELECT A STEP FIRST"
+            )
+            return
+        step.voice_audio = None
+        self.author_panel.refresh_voice_label()
+        self._persist_current_draft()
+        self.author_panel.status_label.setText(
+            f"STATUS: TEACHER VOICE REMOVED — STEP {step.order} "
+            "— THE APP VOICE WILL READ IT"
+        )
+
+    def toggle_teacher_recording(self):
+        """Record the teacher's voice for the selected step with
+        the computer's microphone (Qt Multimedia -- already a
+        declared dependency). Falls back to plain guidance when no
+        microphone exists; attaching a file always works."""
+        if self._recorder is not None:
+            self._recorder.stop()
+            return
+        step = self._author_step()
+        if step is None:
+            self.author_panel.status_label.setText(
+                "STATUS: SELECT A STEP FIRST"
+            )
+            return
+        try:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtMultimedia import (
+                QAudioInput,
+                QMediaCaptureSession,
+                QMediaDevices,
+                QMediaRecorder,
+            )
+        except Exception:
+            self.author_panel.status_label.setText(
+                "STATUS: RECORDING IS NOT AVAILABLE ON THIS COMPUTER "
+                "— ATTACH A VOICE FILE INSTEAD"
+            )
+            return
+        audio_input_device = QMediaDevices.defaultAudioInput()
+        if audio_input_device.isNull():
+            self.author_panel.status_label.setText(
+                "STATUS: NO MICROPHONE FOUND ON THIS COMPUTER "
+                "— ATTACH A VOICE FILE INSTEAD"
+            )
+            return
+        import tempfile
+
+        handle = tempfile.NamedTemporaryFile(
+            prefix="mimforge-voice-", suffix=".wav", delete=False
+        )
+        handle.close()
+        self._record_path = Path(handle.name)
+        self._capture_session = QMediaCaptureSession(self)
+        self._capture_session.setAudioInput(QAudioInput(audio_input_device))
+        self._recorder = QMediaRecorder(self)
+        self._capture_session.setRecorder(self._recorder)
+        self._recorder.recorderStateChanged.connect(
+            self._on_recorder_state_changed
+        )
+        self._recorder.setOutputLocation(
+            QUrl.fromLocalFile(str(self._record_path))
+        )
+        self._recorder.record()
+        self.author_panel.set_recording(True)
+        self.author_panel.status_label.setText(
+            f"STATUS: RECORDING STEP {step.order} — SPEAK NOW, "
+            "THEN PRESS STOP RECORDING"
+        )
+
+    def _on_recorder_state_changed(self, state) -> None:
+        from PySide6.QtMultimedia import QMediaRecorder
+
+        if state != QMediaRecorder.StoppedState or self._recorder is None:
+            return
+        recorder, self._recorder = self._recorder, None
+        self._capture_session = None
+        self.author_panel.set_recording(False)
+        path, self._record_path = self._record_path, None
+        step = self._author_step()
+        if path is None or step is None:
+            return
+        from .. import speech as speech_module
+
+        try:
+            wav = speech_module.convert_to_wav(path.read_bytes(), ".wav")
+            audio = speech_module.StepAudio.teacher(wav)
+        except Exception:
+            self.author_panel.status_label.setText(
+                "STATUS: THE RECORDING COULD NOT BE SAVED "
+                "— TRY ATTACHING A VOICE FILE"
+            )
+            return
+        finally:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if audio.duration_s < 0.3:
+            self.author_panel.status_label.setText(
+                "STATUS: THAT RECORDING WAS TOO SHORT TO USE "
+                "— NOTHING WAS ATTACHED"
+            )
+            return
+        step.voice_audio = audio.to_dict()
+        self.author_panel.refresh_voice_label()
+        self._persist_current_draft()
+        self.author_panel.status_label.setText(
+            f"STATUS: TEACHER VOICE RECORDED — STEP {step.order} "
+            f"— {audio.duration_s:.1f} s"
+        )
+
     def build_current_lesson(self):
         """Assemble the lesson package from the approved draft plus
         the verification outputs, exactly as the Phase 6 code does,
@@ -1230,11 +1410,36 @@ class MainWindow(QMainWindow):
             step.check_question = approved.check_question or step.check_question
             if approved.safety_notes:
                 step.safety_notes = list(approved.safety_notes)
+        # Stage 2: render the talking voice now, at build time --
+        # teacher recordings replace the app's AI voice per step,
+        # and every synthetic step is labelled as AI voice. The
+        # progress callback keeps the window alive while a long
+        # lesson renders.
+        from .. import speech as speech_module
+
+        teacher_audio = {
+            step.order: step.voice_audio
+            for step in draft.steps
+            if step.voice_audio
+        }
+
+        def _voice_progress(done: int, total: int) -> None:
+            self.author_panel.status_label.setText(
+                f"STATUS: BUILDING LESSON — RENDERING VOICE {done}/{total}"
+            )
+            QApplication.processEvents()
+
+        narration_report = speech_module.attach_narration(
+            lesson,
+            teacher_audio=teacher_audio,
+            progress=_voice_progress,
+        )
         lesson.validate()
         self._persist_current_draft()
         self.load_lesson(lesson)
         self.statusBar().showMessage(
             f"LESSON BUILT — {lesson.step_count} STEPS — PLAYBACK READY"
+            f" — {narration_report.summary()}"
         )
         self._run_checker(
             "lesson",

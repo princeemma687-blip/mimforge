@@ -44,6 +44,8 @@ __all__ = [
     "sam_weights_dir",
     "whisper_model_dir",
     "firebase_config_path",
+    "piper_voice_dir",
+    "kokoro_dir",
     "sample_clip_path",
     "describe_resolution",
 ]
@@ -58,6 +60,9 @@ SAM_FOLDER = "sam2.1-hiera-tiny"
 WHISPER_FOLDER_TEMPLATE = "faster-whisper-{size}"
 FIREBASE_CONFIG_NAME = "firebase_config.json"
 SAMPLE_CLIP_NAME = "sample.mp4"
+
+#: The bundled Piper narration voice under models/piper/ (Stage 2).
+PIPER_VOICE = "en_US-ljspeech-medium"
 
 
 class ResourceNotFound(Exception):
@@ -227,6 +232,38 @@ def firebase_config_path() -> Optional[Path]:
     return None
 
 
+def piper_voice_dir(voice: str = PIPER_VOICE) -> Optional[Path]:
+    """Directory of the bundled Piper narration voice (model.onnx +
+    model.onnx.json + lexicon.json), bundled first, then per-user.
+    None when the voice is not available on this machine."""
+    required = ("model.onnx", "model.onnx.json", "lexicon.json")
+    root = bundled_root()
+    if root is not None:
+        candidate = root / "models" / "piper" / voice
+        if all((candidate / name).is_file() for name in required):
+            return candidate
+    candidate = user_data_dir() / "models" / "piper" / voice
+    if all((candidate / name).is_file() for name in required):
+        return candidate
+    return None
+
+
+def kokoro_dir() -> Optional[Path]:
+    """Directory of the Kokoro-82M model, when bundled. Kokoro
+    shipped because its measured pre-render gate passed (plan
+    Stage 2; numbers in docs/SBOM.md); returns None on any machine
+    where the model files are absent."""
+    root = bundled_root()
+    if root is not None:
+        candidate = root / "models" / "kokoro"
+        if (candidate / "model_fp16.onnx").is_file():
+            return candidate
+    candidate = user_data_dir() / "models" / "kokoro"
+    if (candidate / "model_fp16.onnx").is_file():
+        return candidate
+    return None
+
+
 def sample_clip_path() -> Optional[Path]:
     """The self-test sample clip (a generated test asset only --
     never shown to users as proof of anything)."""
@@ -280,6 +317,14 @@ def describe_resolution() -> dict[str, dict[str, Optional[str]]]:
                 str(firebase_config_path()) if firebase_config_path() else None
             ),
             "source": source_of(firebase_config_path()),
+        },
+        "piper_voice": {
+            "path": str(piper_voice_dir()) if piper_voice_dir() else None,
+            "source": source_of(piper_voice_dir()),
+        },
+        "kokoro": {
+            "path": str(kokoro_dir()) if kokoro_dir() else None,
+            "source": source_of(kokoro_dir()),
         },
         "sample_clip": {
             "path": str(sample_clip_path()) if sample_clip_path() else None,

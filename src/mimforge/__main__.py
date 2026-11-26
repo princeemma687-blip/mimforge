@@ -50,6 +50,7 @@ SELF_TEST_MODULES = [
     "mimforge.selftest_flows",
     "mimforge.signing",
     "mimforge.simulation",
+    "mimforge.speech",
     "mimforge.structuring",
     "mimforge.sync",
     "mimforge.templates",
@@ -74,6 +75,7 @@ SELF_TEST_MODULES = [
 SELF_TEST_PACKAGES = [
     "PySide6.QtCore",
     "PySide6.QtGui",
+    "PySide6.QtMultimedia",
     "PySide6.QtWidgets",
     "numpy",
     "scipy",

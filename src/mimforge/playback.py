@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .models import PracticalTemplate, VerificationRun
+from .speech import StepAudio
 
 # Default seconds a step stays on screen when the template gives no
 # duration hint. Kept short enough for a classroom replay; the
@@ -51,6 +52,11 @@ class LessonStep:
     check_question: str = ""
     safety_notes: list[str] = field(default_factory=list)
     duration_s: Optional[float] = None
+    #: Narration audio rendered at lesson build time (Stage 2), or
+    #: None -- a step without audio still plays, silently, with its
+    #: text visible. The audio carries its own plain-words label
+    #: (AI voice vs teacher voice) wherever it is shown.
+    audio: Optional[StepAudio] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,6 +67,7 @@ class LessonStep:
             "check_question": self.check_question,
             "safety_notes": list(self.safety_notes),
             "duration_s": self.duration_s,
+            "audio": self.audio.to_dict() if self.audio else None,
         }
 
     @classmethod
@@ -73,6 +80,7 @@ class LessonStep:
             check_question=data.get("check_question", ""),
             safety_notes=list(data.get("safety_notes", [])),
             duration_s=data.get("duration_s"),
+            audio=StepAudio.from_dict(data.get("audio")),
         )
 
 
@@ -424,11 +432,23 @@ _JS = """
 const DATA = __PAYLOAD__;
 let idx = 0, playing = false, timer = null, replayAnim = null;
 const stepEl = document.getElementById('step');
+function stepAudioEl() { return document.getElementById('step-audio'); }
 function showStep(i) {
   idx = i;
   const s = DATA.steps[i];
   document.getElementById('step-title').textContent = (i+1) + ' / ' + DATA.steps.length + ' — ' + s.title;
   document.getElementById('step-narration').textContent = s.narration || '(no narration)';
+  const voice = document.getElementById('step-voice');
+  const audio = stepAudioEl();
+  if (s.audio && s.audio.data_b64) {
+    voice.textContent = s.audio.label || '';
+    audio.src = 'data:audio/wav;base64,' + s.audio.data_b64;
+    audio.style.display = 'block';
+  } else {
+    voice.textContent = '';
+    audio.removeAttribute('src');
+    audio.style.display = 'none';
+  }
   document.getElementById('step-obs').textContent = s.expected_observation || '—';
   document.getElementById('step-check').textContent = s.check_question || '—';
   const notes = s.safety_notes || [];
@@ -442,6 +462,13 @@ function showStep(i) {
   document.getElementById('status').textContent = playing ? 'STATUS: PLAYING' : 'STATUS: PAUSED — STEP ' + (i+1) + '/' + DATA.steps.length;
 }
 function stepSeconds(s) { return (s.duration_s != null && s.duration_s > 0) ? s.duration_s : 8; }
+function playStepAudio() {
+  const audio = stepAudioEl();
+  if (audio && audio.getAttribute('src')) {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }
+}
 function play() {
   if (idx >= DATA.steps.length - 1 && !playing) { idx = -1; }
   playing = true;
@@ -453,16 +480,21 @@ function next() {
   if (!playing) return;
   if (idx >= DATA.steps.length - 1) { stop(true); return; }
   showStep(idx + 1);
+  playStepAudio();
   timer = setTimeout(next, stepSeconds(DATA.steps[idx]) * 1000);
 }
 function pause() {
   playing = false; clearTimeout(timer);
+  const audio = stepAudioEl();
+  if (audio) audio.pause();
   document.getElementById('play').disabled = false;
   document.getElementById('pause').disabled = true;
   showStep(idx);
 }
 function stop(finished) {
   playing = false; clearTimeout(timer);
+  const audio = stepAudioEl();
+  if (audio) { audio.pause(); audio.currentTime = 0; }
   document.getElementById('play').disabled = false;
   document.getElementById('pause').disabled = true;
   document.getElementById('status').textContent = finished ? 'STATUS: FINISHED — LESSON COMPLETE' : 'STATUS: STOPPED';
@@ -596,6 +628,17 @@ def export_html_lesson(package: LessonPackage, path: str | Path) -> Path:
             '<div class="controls"><button id="play-replay" type="button">'
             "▶ REPLAY TRACK</button></div>"
         )
+    voice_labels = []
+    for step in package.steps:
+        if step.audio and step.audio.label and step.audio.label not in voice_labels:
+            voice_labels.append(step.audio.label)
+    voice_note = ""
+    if voice_labels:
+        voice_note = (
+            '<div class="dim">VOICE: '
+            + _esc(" · ".join(voice_labels))
+            + " — narration audio is embedded in this file and plays offline.</div>"
+        )
     precautions = "".join(
         f"<li>{_esc(p)}</li>" for p in package.precautions
     )
@@ -611,6 +654,7 @@ def export_html_lesson(package: LessonPackage, path: str | Path) -> Path:
 <header>
 <h1>{_esc(package.title)}</h1>
 <div class="dim">{_esc(package.subject)} · TEMPLATE {_esc(package.template_id)} · {_esc(package.step_count)} STEPS · {_esc(round(package.total_seconds))} s</div>
+{voice_note}
 </header>
 <main>
 <nav><h2>STEPS</h2><ol>{steps_nav}</ol></nav>
@@ -625,6 +669,8 @@ def export_html_lesson(package: LessonPackage, path: str | Path) -> Path:
 <span id="status" class="meta">STATUS: IDLE</span>
 </div>
 <p class="narration" id="step-narration"></p>
+<p class="meta"><b id="step-voice"></b></p>
+<audio id="step-audio" controls preload="auto" style="display:none;width:100%;max-width:640px"></audio>
 <p class="meta"><b>Expected observation:</b> <span id="step-obs"></span></p>
 <p class="meta"><b>Check:</b> <span id="step-check"></span></p>
 <p class="meta"><b>Safety:</b> <span id="step-safety"></span></p>

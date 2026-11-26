@@ -15,8 +15,9 @@ drive the whole lesson without waiting on the real timer.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QPainter, QPen
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -147,6 +148,31 @@ class LessonPlayer(QWidget):
         self.narration.setWordWrap(True)
         layout.addWidget(self.narration)
 
+        # Stage 2: the step's voice, labelled in plain words (AI
+        # voice vs teacher voice). Empty when the step has no audio
+        # -- the lesson still plays, silently, with the text above.
+        self.voice_label = QLabel("")
+        self.voice_label.setFont(mono_font(9, bold=True))
+        self.voice_label.setStyleSheet(f"color: {ACCENT};")
+        self.voice_label.setWordWrap(True)
+        layout.addWidget(self.voice_label)
+
+        # Narration playback. Any failure here (no audio device, no
+        # backend) leaves the player fully functional and silent --
+        # audio is an enhancement, never a dependency.
+        self._media: QMediaPlayer | None = None
+        self._audio_out: QAudioOutput | None = None
+        self._audio_dir = None  # tempfile.TemporaryDirectory
+        self._audio_files: dict[int, object] = {}
+        self._audio_step: int | None = None
+        try:
+            self._audio_out = QAudioOutput(self)
+            self._media = QMediaPlayer(self)
+            self._media.setAudioOutput(self._audio_out)
+        except Exception:
+            self._media = None
+            self._audio_out = None
+
         self.observation = QLabel("")
         self.observation.setFont(mono_font(10))
         self.observation.setStyleSheet(f"color: {MUTED};")
@@ -226,10 +252,12 @@ class LessonPlayer(QWidget):
         lesson.validate()
         self._stop_timer()
         self._sync_timer.stop()
+        self._stop_media()
         self._step_elapsed = 0.0
         self._lesson = lesson
         self._index = 0
         self._playing = False
+        self._prepare_audio(lesson)
         if params is not None:
             self.set_machine_params(params)
         self.steps.clear()
@@ -307,6 +335,14 @@ class LessonPlayer(QWidget):
         self._playing = True
         self._sync_timer.start()
         self._arm_timer()
+        if (
+            self._media is not None
+            and self._audio_step == self._index
+            and self._media.playbackState() == QMediaPlayer.PausedState
+        ):
+            self._media.play()  # resume the paused step narration
+        else:
+            self._play_step_audio(self._index)
         self.status.setText(
             f"STATUS: PLAYING — STEP {self._index + 1}/{len(self._lesson.steps)}"
         )
@@ -317,6 +353,11 @@ class LessonPlayer(QWidget):
         self._playing = False
         self._stop_timer()
         self._sync_timer.stop()
+        if self._media is not None:
+            try:
+                self._media.pause()
+            except Exception:
+                pass
         self.status.setText(
             f"STATUS: PAUSED — STEP {self._index + 1}/{len(self._lesson.steps)}"
         )
@@ -325,6 +366,7 @@ class LessonPlayer(QWidget):
         self._playing = False
         self._stop_timer()
         self._sync_timer.stop()
+        self._stop_media()
         self._step_elapsed = 0.0
         if self._lesson is None:
             self.status.setText("STATUS: IDLE — NO LESSON LOADED")
@@ -341,6 +383,7 @@ class LessonPlayer(QWidget):
             self._playing = False
             self._stop_timer()
             self._sync_timer.stop()
+            self._stop_media()
             self.replay_view.set_progress(1.0)
             self.machine_view.seek_fraction(1.0)
             self.status.setText("STATUS: FINISHED — LESSON COMPLETE")
@@ -373,21 +416,76 @@ class LessonPlayer(QWidget):
         if self._lesson is None or row < 0 or row >= len(self._lesson.steps):
             return
         was_playing = self._playing
-        self._playing = False
         self._stop_timer()
+        if not was_playing:
+            self._stop_media()
         self._step_elapsed = 0.0
         self._index = row
+        self._playing = was_playing
         self._show_step(row)
         if was_playing:
-            self._playing = True
             self._sync_timer.start()
             self._arm_timer()
+
+    # ------------------------------------------------------ narration audio
+
+    def _prepare_audio(self, lesson: LessonPackage) -> None:
+        """Write each step's narration WAV to a temp folder the
+        media player can stream from. Steps without audio simply
+        have no file -- playback stays silent for them."""
+        import tempfile
+        from pathlib import Path
+
+        if self._audio_dir is not None:
+            try:
+                self._audio_dir.cleanup()
+            except Exception:
+                pass
+            self._audio_dir = None
+        self._audio_files = {}
+        self._audio_step = None
+        if not any(step.audio and step.audio.data_b64 for step in lesson.steps):
+            return
+        self._audio_dir = tempfile.TemporaryDirectory(prefix="mimforge-voice-")
+        root = Path(self._audio_dir.name)
+        for index, step in enumerate(lesson.steps):
+            if step.audio and step.audio.data_b64:
+                try:
+                    target = root / f"step-{index + 1:02d}.wav"
+                    target.write_bytes(step.audio.wav_bytes())
+                    self._audio_files[index] = target
+                except Exception:
+                    continue
+
+    def _play_step_audio(self, index: int) -> None:
+        if self._media is None:
+            return
+        target = self._audio_files.get(index)
+        try:
+            if target is None:
+                self._media.stop()
+                self._audio_step = None
+                return
+            self._media.setSource(QUrl.fromLocalFile(str(target)))
+            self._media.play()
+            self._audio_step = index
+        except Exception:
+            self._audio_step = None
+
+    def _stop_media(self) -> None:
+        if self._media is not None:
+            try:
+                self._media.stop()
+            except Exception:
+                pass
+        self._audio_step = None
 
     def _show_step(self, index: int) -> None:
         step = self._lesson.steps[index]
         self.steps.setCurrentRow(index)
         self.step_title.setText(f"{index + 1:02d} — {step.title}")
         self.narration.setText(step.narration or "(no narration)")
+        self.voice_label.setText(step.audio.label if step.audio else "")
         self.observation.setText(
             f"EXPECTED: {step.expected_observation or '—'}"
         )
@@ -397,3 +495,5 @@ class LessonPlayer(QWidget):
         )
         self.replay_view.set_progress((index + 1) / len(self._lesson.steps))
         self._sync_machine()
+        if self._playing:
+            self._play_step_audio(index)

@@ -44,6 +44,11 @@ mimforge = "mimforge.ui.main_window:run"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Packaging-time DATA SOURCE only: setup/fetch_bundled_assets.py
+# reads gruut-lang-en's espeak lexicon.db (SQLite, via stdlib) and
+# converts it into the bundled phoneme lexicon for the narration
+# voices. The app never imports gruut and it is never shipped.
+packaging = ["gruut-lang-en>=2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

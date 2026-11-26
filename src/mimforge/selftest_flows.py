@@ -237,6 +237,91 @@ def _run(results, resources, require_bundled: bool) -> None:
         results.append(("load Firebase config", False, f"{type(exc).__name__}: {exc}"))
 
     _probe_machine_view(results)
+    _probe_narration(results)
+
+
+def _probe_narration(results) -> None:
+    """Stage 2 Gate v2 probe: talking lessons, exercised in this
+    scrubbed environment. The BUNDLED Piper voice + lexicon must
+    resolve through the Resource Layer and synthesize one step of
+    neutral text into non-silent audio, and the attach flow must
+    stamp the step with the plain-words AI voice label. Kokoro is
+    probed too when bundled: it must also produce non-silent
+    audio. A lesson with no working voice would still play
+    silently -- but then this probe fails, because the shipped
+    build promises a voice."""
+    try:
+        from . import resources, speech
+        from .playback import LessonPackage, LessonStep
+
+        _check_source(
+            results,
+            "resolve Piper voice",
+            resources.piper_voice_dir(),
+            require_bundled=True,
+        )
+        engine = speech.piper_engine()
+        if engine is None:
+            results.append(
+                ("narration synthesis", False, "Piper voice did not resolve")
+            )
+            return
+        text = "The machine is ready. Watch the moving part, then read the scale."
+        wav, duration = engine.synthesize(text)
+        rms = speech.wav_rms(wav)
+        ok = duration > 0.8 and rms > 0.005
+        results.append(
+            (
+                "narration synthesis",
+                ok,
+                f"piper {engine.voice}: {duration:.1f}s audio, rms {rms:.3f}",
+            )
+        )
+        if not ok:
+            return
+        import tempfile
+        from pathlib import Path
+
+        lesson = LessonPackage(
+            title="Probe",
+            subject="Probe",
+            template_id="probe",
+            steps=[LessonStep(order=1, title="Probe step", narration=text)],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            report = speech.attach_narration(
+                lesson, engine=engine, cache_dir=Path(tmp)
+            )
+        step = lesson.steps[0]
+        labelled = (
+            report.ai_steps == 1
+            and step.audio is not None
+            and step.audio.label == speech.AI_VOICE_LABEL
+            and step.audio.source == "ai"
+        )
+        results.append(
+            (
+                "narration label",
+                labelled,
+                f"attach report ai_steps={report.ai_steps}; "
+                f"label={step.audio.label if step.audio else None!r}",
+            )
+        )
+        kokoro = speech.KokoroEngine()
+        if kokoro.available():
+            kwav, kduration = kokoro.synthesize(text)
+            krms = speech.wav_rms(kwav)
+            results.append(
+                (
+                    "narration kokoro",
+                    kduration > 0.8 and krms > 0.005,
+                    f"kokoro-82m: {kduration:.1f}s audio, rms {krms:.3f}",
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            ("narration synthesis", False, f"{type(exc).__name__}: {exc}")
+        )
 
 
 def _probe_machine_view(results) -> None:

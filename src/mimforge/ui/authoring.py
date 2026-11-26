@@ -50,6 +50,14 @@ class AuthoringPanel(QWidget):
     #: moment, not only the next project switch.
     draft_changed = Signal()
 
+    #: Teacher voice (Stage 2): the shell owns the file dialog,
+    #: the microphone recorder and the audio conversion; the panel
+    #: only asks. The recording replaces the app's synthetic voice
+    #: for the selected step and is labelled as the teacher's.
+    voice_attach_requested = Signal()
+    voice_record_requested = Signal()
+    voice_remove_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._draft: AuthoringDraft | None = None
@@ -119,6 +127,33 @@ class AuthoringPanel(QWidget):
         self.check_label.setWordWrap(True)
         right.addWidget(self.check_label)
 
+        self.voice_label = QLabel("VOICE: —")
+        self.voice_label.setFont(mono_font(9, bold=True))
+        self.voice_label.setStyleSheet(f"color: {ACCENT};")
+        self.voice_label.setWordWrap(True)
+        right.addWidget(self.voice_label)
+
+        voice_row = QHBoxLayout()
+        self.voice_attach_button = QPushButton("⇓  ATTACH MY VOICE FILE")
+        self.voice_attach_button.setFont(mono_font(10, bold=True))
+        self.voice_attach_button.clicked.connect(
+            self.voice_attach_requested.emit
+        )
+        self.voice_record_button = QPushButton("●  RECORD MY VOICE")
+        self.voice_record_button.setFont(mono_font(10, bold=True))
+        self.voice_record_button.clicked.connect(
+            self.voice_record_requested.emit
+        )
+        self.voice_remove_button = QPushButton("✕  REMOVE MY VOICE")
+        self.voice_remove_button.setFont(mono_font(10, bold=True))
+        self.voice_remove_button.clicked.connect(
+            self.voice_remove_requested.emit
+        )
+        voice_row.addWidget(self.voice_attach_button)
+        voice_row.addWidget(self.voice_record_button)
+        voice_row.addWidget(self.voice_remove_button)
+        right.addLayout(voice_row)
+
         buttons = QHBoxLayout()
         self.approve_button = QPushButton("✓  APPROVE STEP")
         self.approve_button.setFont(mono_font(10, bold=True))
@@ -160,6 +195,33 @@ class AuthoringPanel(QWidget):
 
     def current_draft(self) -> AuthoringDraft | None:
         return self._draft
+
+    def current_step_index(self) -> int | None:
+        return self._current
+
+    def refresh_voice_label(self) -> None:
+        """Show the selected step's voice state in plain words."""
+        draft = self._draft
+        if draft is None or self._current is None:
+            self.voice_label.setText("VOICE: —")
+            return
+        step = draft.steps[self._current]
+        if step.voice_audio:
+            duration = float(step.voice_audio.get("duration_s", 0.0))
+            self.voice_label.setText(
+                "VOICE: TEACHER VOICE — RECORDED BY THE TEACHER "
+                f"({duration:.1f} s) — PLAYS INSTEAD OF THE APP VOICE"
+            )
+        else:
+            self.voice_label.setText(
+                "VOICE: NONE — THE APP'S AI VOICE WILL READ THIS STEP "
+                "WHEN THE LESSON IS BUILT"
+            )
+
+    def set_recording(self, active: bool) -> None:
+        self.voice_record_button.setText(
+            "■  STOP RECORDING" if active else "●  RECORD MY VOICE"
+        )
 
     def show_import_status(self, text: str) -> None:
         self.import_status_label.setText(text)
@@ -216,6 +278,7 @@ class AuthoringPanel(QWidget):
         self.editor.blockSignals(True)
         self.editor.setPlainText(step.draft_text)
         self.editor.blockSignals(False)
+        self.refresh_voice_label()
 
     def _on_text_changed(self) -> None:
         draft = self._draft
