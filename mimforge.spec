@@ -56,11 +56,13 @@ hiddenimports = [
     "mimforge.adjust",
     "mimforge.allowlist",
     "mimforge.bom",
+    "mimforge.checker",
     "mimforge.codegen",
     "mimforge.config",
     "mimforge.delivery",
     "mimforge.design",
     "mimforge.discrepancy",
+    "mimforge.firebase_auth",
     "mimforge.firebase_sync",
     "mimforge.models",
     "mimforge.narration",
@@ -68,8 +70,10 @@ hiddenimports = [
     "mimforge.perception",
     "mimforge.playback",
     "mimforge.projects",
+    "mimforge.retarget",
     "mimforge.risk",
     "mimforge.safety",
+    "mimforge.sam_tracker",
     "mimforge.signing",
     "mimforge.simulation",
     "mimforge.structuring",
@@ -82,23 +86,49 @@ hiddenimports = [
     "mimforge.ui.motion",
     "mimforge.ui.panels",
     "mimforge.ui.playback",
+    "mimforge.ui.sam_picker",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "numpy",
+    "scipy",
     "cv2",
     "faster_whisper",
     "ctranslate2",
     "av",
+    "tokenizers",
+    "lib3mf",
+    "huggingface_hub",
+    "onnxruntime",
     "cryptography",
     "build123d",
     "OCP",
     "mujoco",
 ]
 
-# MuJoCo ships native libraries + model data that Analysis does not
-# pick up from imports alone; collect the whole package.
-for _pkg in ("mujoco", "build123d", "OCP"):
+# Native/data-heavy runtime packages ship libraries, data files and
+# lazily-imported submodules that Analysis does not pick up from
+# imports alone; collect each whole package. scipy is here because
+# build123d imports it at module load -- the 2026-11-26 run #6
+# launch crash was scipy missing from the bundle while every test
+# passed in the dev venv. tests/test_frozen_bundle.py guards this
+# list against the app's real import graph.
+for _pkg in (
+    "mujoco",
+    "build123d",
+    "OCP",
+    "scipy",
+    "onnxruntime",
+    "ctranslate2",
+    "faster_whisper",
+    "av",
+    "tokenizers",
+    # build123d.mesher does `from lib3mf import Lib3MF` at module
+    # load and lib3mf loads its native binary by path; found by the
+    # frozen self-test right after the scipy fix (same crash class,
+    # one import later).
+    "lib3mf",
+):
     _d, _b, _h = collect_all(_pkg)
     datas += _d
     binaries += _b
@@ -113,7 +143,14 @@ a = Analysis(  # noqa: F821 - PyInstaller DSL
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "scipy", "PIL"],
+    # NEVER exclude a package that is installed as part of the
+    # resolved dependency set: build123d imports scipy at module
+    # load, and this list previously excluded scipy (and PIL),
+    # which crashed run #6 on launch on the user's laptop
+    # (2026-11-26) while the whole test suite passed in the venv.
+    # tkinter/matplotlib stay excluded: nothing in the import
+    # graph uses them (guarded by tests/test_frozen_bundle.py).
+    excludes=["tkinter", "matplotlib"],
     noarchive=False,
     optimize=0,
 )

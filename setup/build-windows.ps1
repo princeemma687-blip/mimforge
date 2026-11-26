@@ -55,6 +55,18 @@ if (-not (Test-Path (Join-Path $AppDir "Mimforge.exe"))) {
 }
 Write-Host "App built: $AppDir"
 
+# Frozen-bundle gate (2026-11-26): the exe is windowed, so launch
+# the self-test with Start-Process -Wait and gate on its exit code.
+# A module missing from the bundle (the scipy launch crash) fails
+# HERE, before Inno Setup packages it. QT_QPA_PLATFORM=offscreen
+# is already set above for the test gate.
+Write-Host "Self-testing the frozen app (missing-module gate) ..."
+$proc = Start-Process -FilePath (Join-Path $AppDir "Mimforge.exe") -ArgumentList "--self-test" -Wait -PassThru
+if ($proc.ExitCode -ne 0) {
+    throw "Frozen-app self-test failed with exit code $($proc.ExitCode) -- a module is missing from the bundle. Do not package this build."
+}
+Write-Host "Self-test passed."
+
 Write-Host "Locating the Inno Setup compiler (iscc.exe) ..."
 $isccDirs = @(
     "C:\Program Files (x86)\Inno Setup 6",

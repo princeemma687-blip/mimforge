@@ -19,6 +19,11 @@ dependencies = [
     # it; 14.4.0 ships no cp312 wheel on this index).
     "av==13.1.0",
     "numpy>=1.26",
+    # Runtime need via build123d, which imports scipy at module
+    # load. Declared explicitly since 2026-11-26 (not left as an
+    # accidental transitive): the frozen run #6 build excluded it
+    # and crashed on launch with "No module named 'scipy'".
+    "scipy>=1.14",
     "build123d>=0.13",
     "mujoco>=3",
     # Direct dependency since 2026-11-26: the SAM 2.1 click tracker
