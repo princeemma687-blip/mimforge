@@ -57,11 +57,13 @@ SELF_TEST_MODULES = [
     "mimforge.ui",
     "mimforge.ui.authoring",
     "mimforge.ui.deliver",
+    "mimforge.ui.machine_view",
     "mimforge.ui.main_window",
     "mimforge.ui.motion",
     "mimforge.ui.panels",
     "mimforge.ui.playback",
     "mimforge.ui.sam_picker",
+    "mimforge.visuals",
 ]
 
 # Third-party runtime packages the app depends on directly or one
@@ -78,6 +80,7 @@ SELF_TEST_PACKAGES = [
     "build123d",
     "OCP",
     "mujoco",
+    "OpenGL",
     "cv2",
     "onnxruntime",
     "faster_whisper",

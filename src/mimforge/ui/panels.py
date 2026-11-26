@@ -701,11 +701,19 @@ class SimulatePanel(QWidget):
         )
         self.replay_button.setEnabled(False)
         layout.addWidget(self.replay_button)
+        # Stage 1: the machine performing is the primary visual;
+        # the graph (the marking) and the flat track stay as
+        # readouts beneath it.
+        from .machine_view import MachineViewWidget
+
+        self.machine_view = MachineViewWidget()
+        layout.addWidget(self.machine_view, stretch=1)
         self.graph = FitGraphView()
         layout.addWidget(self.graph)
         from .playback import ReplayView
 
         self.trajectory_view = ReplayView()
+        self.trajectory_view.setMinimumHeight(100)
         layout.addWidget(self.trajectory_view)
         self._traj_timer = QTimer(self)
         self._traj_timer.setInterval(40)
@@ -724,10 +732,29 @@ class SimulatePanel(QWidget):
         self._anim_timer.setInterval(40)
         self._anim_timer.timeout.connect(self._anim_tick)
 
+    def _host_params(self):
+        """The current design's parameters, when the host can
+        say (a stub host in a test may not) -- the machine view
+        falls back to the platform defaults."""
+        getter = getattr(self.host, "current_params", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                pass
+        from ..design import GantryParameters
+
+        return GantryParameters()
+
     def show_project(self, title: str | None) -> None:
         self.project_label.setText(f"PROJECT: {title or '—'}")
         self.graph.clear()
         self.trajectory_view.set_replay([], "")
+        from ..visuals import MachineTimeline
+
+        params = self._host_params()
+        self.machine_view.set_params(params)
+        self.machine_view.set_timeline(MachineTimeline.rest(params))
         self.results.setPlainText("No run yet.")
         self.status_label.setText("STATUS: READY")
 
@@ -742,10 +769,27 @@ class SimulatePanel(QWidget):
         self.replay_button.setEnabled(bool(available))
 
     def show_trajectory(self, result, replay) -> None:
-        """The retargeted trajectory: the animation in the replay
-        view (the same rendering Playback uses) and the fidelity
-        report in the readout -- the numbers, not adjectives."""
+        """The retargeted trajectory: the machine performing it in
+        the machine view, the animation in the replay view (the
+        same rendering Playback uses) and the fidelity report in
+        the readout -- the numbers, not adjectives."""
         self.trajectory_view.set_replay(replay.points, replay.label)
+        from ..visuals import MachineTimeline
+
+        try:
+            params = self._host_params()
+            timeline = MachineTimeline.from_retarget_points(
+                result.points, params
+            )
+            timeline.label = replay.label
+            self.machine_view.set_params(params)
+            self.machine_view.set_timeline(timeline)
+            if motion_enabled() and self.isVisible():
+                self.machine_view.play()
+            else:
+                self.machine_view.seek_fraction(0.3)
+        except Exception:
+            pass  # the readout below still carries the result
         lines = [
             "TRAJECTORY REPLAY — THE MACHINE FOLLOWS YOUR "
             "RECORDED DEMONSTRATION",
@@ -780,6 +824,23 @@ class SimulatePanel(QWidget):
         self.trajectory_view.set_progress(self._traj_progress)
 
     def show_outcome(self, outcome) -> None:
+        # The machine performs the run's simulation track while
+        # the graph below does the marking.
+        replay = getattr(outcome, "replay", None)
+        if replay is not None and len(getattr(replay, "points", [])) >= 2:
+            from ..visuals import MachineTimeline
+
+            try:
+                params = self._host_params()
+                timeline = MachineTimeline.from_sim_track(
+                    replay.points, params
+                )
+                timeline.label = replay.label
+                self.machine_view.set_params(params)
+                self.machine_view.set_timeline(timeline)
+                self.machine_view.seek_fraction(0.3)
+            except Exception:
+                pass
         points = [
             (float(r[outcome.x_key]), float(r[outcome.y_key]))
             for r in outcome.teacher_rows

@@ -26,6 +26,13 @@ dependencies = [
     "scipy>=1.14",
     "build123d>=0.13",
     "mujoco>=3",
+    # Runtime need via MuJoCo, whose software-GL backend (the
+    # machine view's offscreen renderer, Stage 1) imports PyOpenGL
+    # when its context is created. Declared explicitly since
+    # 2026-11-26: left as an accidental transitive, it was missing
+    # from the frozen bundle's collection and the Stage 1
+    # clean-room self-test failed at renderer creation.
+    "PyOpenGL>=3.1",
     # Direct dependency since 2026-11-26: the SAM 2.1 click tracker
     # runs its encoder/decoder ONNX graphs on it (it also arrives
     # transitively via faster-whisper).

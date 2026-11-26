@@ -236,6 +236,79 @@ def _run(results, resources, require_bundled: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         results.append(("load Firebase config", False, f"{type(exc).__name__}: {exc}"))
 
+    _probe_machine_view(results)
+
+
+def _probe_machine_view(results) -> None:
+    """Stage 1 Gate v2 probe: the living machine, exercised in
+    this scrubbed environment. When a GL renderer is available,
+    the three views must render living, differing frames inside
+    the frame-time budget. When it is not, the probe passes on
+    the fallback path instead -- the canvas performance view must
+    construct and draw -- because the fallback is a designed
+    behaviour, while a crash or a blank panel is not."""
+    try:
+        from . import visuals
+        from .design import GantryParameters
+
+        params = GantryParameters()
+        timeline = visuals.MachineTimeline.rest(params)
+        state = timeline.state_at(0.0)
+        if visuals.renderer_available():
+            renderer = visuals.MachineRenderer(params, width=320, height=240)
+            frames = {
+                view: renderer.render(state, view)
+                for view in ("front", "side", "top")
+            }
+            alive = all(visuals.frame_is_alive(f) for f in frames.values())
+            differ = not (
+                (frames["front"] == frames["side"]).all()
+                or (frames["front"] == frames["top"]).all()
+            )
+            median_ms = renderer.measure_median_frame_ms(state, frames=15)
+            renderer.close()
+            ok = alive and differ and median_ms < 100.0
+            results.append(
+                (
+                    "machine view render",
+                    ok,
+                    f"median {median_ms:.1f} ms/frame at 320x240; "
+                    f"views alive={alive} differ={differ}",
+                )
+            )
+        else:
+            results.append(
+                (
+                    "machine view render",
+                    True,
+                    "renderer unavailable here -- fallback path probed below",
+                )
+            )
+        # The fallback path must exist and draw, in both worlds.
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is not None:
+            from .ui.machine_view import MachineViewWidget
+
+            widget = MachineViewWidget(force_fallback=True)
+            widget.set_timeline(timeline, "PROBE")
+            widget.render_frame_now()
+            ok = widget.using_fallback and widget.pages.currentIndex() == 1
+            widget.set_view("internals")
+            ok = ok and widget.pages.currentIndex() == 2
+            results.append(
+                (
+                    "machine view fallback",
+                    ok,
+                    "canvas performance + internals pages draw offscreen",
+                )
+            )
+            widget.close()
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            ("machine view render", False, f"{type(exc).__name__}: {exc}")
+        )
+
 
 def flows_main() -> int:
     """Console entry for the flow probes: prints one line per

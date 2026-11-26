@@ -53,6 +53,10 @@ RUNTIME_PACKAGES = {
     # build123d.mesher imports lib3mf at module load; lib3mf loads
     # its native binary by path, so the whole package must ship.
     "lib3mf": "collect_all",
+    # MuJoCo's software-GL context imports PyOpenGL at renderer
+    # creation (machine view, Stage 1); its platform loader needs
+    # the whole package in the bundle.
+    "OpenGL": "collect_all",
     "huggingface_hub": "hiddenimport",
     "cryptography": "hiddenimport",
 }

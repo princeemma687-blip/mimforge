@@ -739,7 +739,7 @@ class MainWindow(QMainWindow):
 
     def load_lesson(self, lesson) -> None:
         """Load a lesson package into the Playback panel and show it."""
-        self.playback_panel.load_lesson(lesson)
+        self.playback_panel.load_lesson(lesson, self.current_params())
         self.nav.setCurrentRow(SECTIONS.index("Playback"))
 
     # ---------------------------------------------------- project store

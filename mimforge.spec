@@ -109,7 +109,9 @@ hiddenimports = [
     "mimforge.ui.motion",
     "mimforge.ui.panels",
     "mimforge.ui.playback",
+    "mimforge.ui.machine_view",
     "mimforge.ui.sam_picker",
+    "mimforge.visuals",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
@@ -151,6 +153,12 @@ for _pkg in (
     # frozen self-test right after the scipy fix (same crash class,
     # one import later).
     "lib3mf",
+    # MuJoCo's software-GL backend (the machine view's offscreen
+    # renderer, Stage 1) does `from OpenGL import GL` when its
+    # context is created; PyOpenGL's platform loader fails in a
+    # frozen bundle unless the whole package ships. Found by the
+    # Stage 1 clean-room frozen self-test (same crash class).
+    "OpenGL",
 ):
     _d, _b, _h = collect_all(_pkg)
     datas += _d

@@ -26,7 +26,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..design import GantryParameters
 from ..playback import DEFAULT_STEP_SECONDS, LessonPackage
+from ..visuals import MachineTimeline
+from .machine_view import MachineViewWidget
 from .main_window import ACCENT, MONO_FAMILY, MUTED, TEXT, mono_font
 
 
@@ -156,7 +159,18 @@ class LessonPlayer(QWidget):
         self.check.setWordWrap(True)
         layout.addWidget(self.check)
 
+        # Stage 1: the machine itself is the primary visual; the
+        # flat track view stays as the diagnostic readout under it.
+        self.machine_view = MachineViewWidget()
+        layout.addWidget(self.machine_view, stretch=1)
+        self._machine_params = GantryParameters()
+        self._step_elapsed = 0.0
+        self._sync_timer = QTimer(self)
+        self._sync_timer.setInterval(100)
+        self._sync_timer.timeout.connect(self._sync_tick)
+
         self.replay_view = ReplayView()
+        self.replay_view.setMinimumHeight(100)
         layout.addWidget(self.replay_view)
 
         controls = QHBoxLayout()
@@ -202,12 +216,22 @@ class LessonPlayer(QWidget):
     def is_playing(self) -> bool:
         return self._playing
 
-    def load_lesson(self, lesson: LessonPackage) -> None:
+    def set_machine_params(self, params: GantryParameters) -> None:
+        """The design the machine view performs with."""
+        self._machine_params = params
+        self.machine_view.set_params(params)
+
+    def load_lesson(self, lesson: LessonPackage,
+                    params: GantryParameters | None = None) -> None:
         lesson.validate()
         self._stop_timer()
+        self._sync_timer.stop()
+        self._step_elapsed = 0.0
         self._lesson = lesson
         self._index = 0
         self._playing = False
+        if params is not None:
+            self.set_machine_params(params)
         self.steps.clear()
         for i, step in enumerate(lesson.steps):
             self.steps.addItem(f"{i + 1:02d}  —  {step.title}")
@@ -215,10 +239,55 @@ class LessonPlayer(QWidget):
             self.replay_view.set_replay(lesson.replay.points, lesson.replay.label)
         else:
             self.replay_view.set_replay([], "")
+        self._load_machine_timeline(lesson)
         self._show_step(0)
         self.status.setText(
             f"STATUS: LOADED — {lesson.step_count} STEPS — READY"
         )
+
+    def _load_machine_timeline(self, lesson: LessonPackage) -> None:
+        """Feed the machine view from the lesson's replay track.
+
+        The replay's own axis labels say which frame its points
+        are in (the retargeted demonstration track is labelled in
+        millimetres of carriage travel and drop; the simulation
+        track is metres relative to the pivot). Any failure leaves
+        the machine at rest -- a lesson never fails to load over
+        its picture."""
+        params = self._machine_params
+        replay = lesson.replay
+        try:
+            if replay is None or len(replay.points) < 2:
+                timeline = MachineTimeline.rest(params)
+            elif replay.x_label.lower().startswith("carriage"):
+                timeline = MachineTimeline.from_retarget_points(
+                    replay.points, params
+                )
+            else:
+                timeline = MachineTimeline.from_sim_track(
+                    replay.points, params
+                )
+            if replay is not None:
+                timeline.label = replay.label
+        except Exception:
+            timeline = MachineTimeline.rest(params)
+        self.machine_view.set_timeline(timeline)
+
+    # ------------------------------------------------- machine sync
+
+    def _sync_tick(self) -> None:
+        self._step_elapsed += 0.1
+        self._sync_machine()
+
+    def _sync_machine(self) -> None:
+        """The machine's clock is the lesson's clock: the track
+        plays across the whole lesson, each step owning an equal
+        share, so the performance and the narration never drift."""
+        if self._lesson is None or not self._lesson.steps:
+            return
+        n = len(self._lesson.steps)
+        within = min(1.0, self._step_elapsed / self.step_seconds(self._index))
+        self.machine_view.seek_fraction((self._index + within) / n)
 
     def step_seconds(self, index: int) -> float:
         step = self._lesson.steps[index]
@@ -233,8 +302,10 @@ class LessonPlayer(QWidget):
         if self._index >= len(self._lesson.steps) - 1 and not self._playing:
             # Restart from the top after a finished run.
             self._index = 0
+            self._step_elapsed = 0.0
             self._show_step(0)
         self._playing = True
+        self._sync_timer.start()
         self._arm_timer()
         self.status.setText(
             f"STATUS: PLAYING — STEP {self._index + 1}/{len(self._lesson.steps)}"
@@ -245,6 +316,7 @@ class LessonPlayer(QWidget):
             return
         self._playing = False
         self._stop_timer()
+        self._sync_timer.stop()
         self.status.setText(
             f"STATUS: PAUSED — STEP {self._index + 1}/{len(self._lesson.steps)}"
         )
@@ -252,6 +324,8 @@ class LessonPlayer(QWidget):
     def stop(self) -> None:
         self._playing = False
         self._stop_timer()
+        self._sync_timer.stop()
+        self._step_elapsed = 0.0
         if self._lesson is None:
             self.status.setText("STATUS: IDLE — NO LESSON LOADED")
             return
@@ -266,10 +340,13 @@ class LessonPlayer(QWidget):
         if self._index >= len(self._lesson.steps) - 1:
             self._playing = False
             self._stop_timer()
+            self._sync_timer.stop()
             self.replay_view.set_progress(1.0)
+            self.machine_view.seek_fraction(1.0)
             self.status.setText("STATUS: FINISHED — LESSON COMPLETE")
             return
         self._index += 1
+        self._step_elapsed = 0.0
         self._show_step(self._index)
         self._arm_timer()
         self.status.setText(
@@ -298,10 +375,12 @@ class LessonPlayer(QWidget):
         was_playing = self._playing
         self._playing = False
         self._stop_timer()
+        self._step_elapsed = 0.0
         self._index = row
         self._show_step(row)
         if was_playing:
             self._playing = True
+            self._sync_timer.start()
             self._arm_timer()
 
     def _show_step(self, index: int) -> None:
@@ -317,3 +396,4 @@ class LessonPlayer(QWidget):
             f"STEP {index + 1:02d}/{len(self._lesson.steps):02d}"
         )
         self.replay_view.set_progress((index + 1) / len(self._lesson.steps))
+        self._sync_machine()
