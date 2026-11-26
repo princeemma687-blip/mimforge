@@ -72,9 +72,11 @@ the deliverable and is verified on Prince's laptop.
   only — not bought, per the no-money rule.
 - **Lean mode is the default.** The Whisper model is the `base`
   size and is **not bundled**: it downloads on first transcription
-  (~150 MB, needs a connection once). SAM 2.1 is **not in this
-  build** at all (see `docs/SBOM.md` status section). The full
-  profile is a runtime switch, not a second installer.
+  (~150 MB, needs a connection once). The SAM 2.1 click tracker's
+  weights are likewise **not bundled**: they download once on
+  first use (~130 MB, needs a connection once, then work offline;
+  see `docs/SBOM.md`). The full profile is a runtime switch, not a
+  second installer.
 - **QNX evidence is separate.** The QNX C controller (`qnx/`) is
   not inside the Windows installer; its build/run evidence lives
   in the repo and the submission package (see `docs/SUBMISSION.md`).

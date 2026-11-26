@@ -161,13 +161,28 @@ corrected wherever they claimed more than the code does —
 including three scope-freeze amendments: trajectory retargeting
 deferred post-V1, Firebase Auth not integrated, SAM 2.1 not
 integrated. The audit trail is in the project's progress log.
+All three amendments were then resolved the same day
+(2026-11-26, on the owner's order): Firebase Auth is integrated
+(email/password sign-in in the shell; live per-user sync under
+`users/{uid}/sync/...`, proven by a live account round-trip in
+the test suite); SAM 2.1 is integrated as the click tracker
+(the teacher clicks the object; the ONNX model follows it —
+weights download once, ~130 MB); and trajectory retargeting is
+built (`retarget.py`): the recorded demonstration's path is
+mapped onto the machine, reach-clamped with every clamp counted,
+and time-warped to the safety cap with the path untouched —
+Simulate replays the machine following the human, and lessons
+use the retargeted track. A Muse Spark double-checker (advisory
+second opinion at five build steps; the local result is always
+the official one) is wired against the owner's Worker seam and
+awaits his endpoint.
 
 Next: Phase 5 unblocks on Prince's sign-in (SDP install → `qcc`
 compile → QEMU run → timing log), then the Windows installer
 test + demo-video recording on his laptop, then submission
 (Prince registers from 10 Dec; internal submit-by 14 Dec).
 The test suite is the acceptance gate for every phase: `pytest` —
-currently 237 tests passing.
+currently 295 tests passing.
 
 ## Build / run
 

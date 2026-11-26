@@ -20,24 +20,42 @@ slice + the generic architecture.
   a configuration of it, not a bespoke design).
 - **Demonstration ↔ simulation comparison**: the recorded demonstration
   track is compared against the simulated machine track by the
-  discrepancy engine. **Deterministic trajectory retargeting**
-  (kinematic mapping, time-scaling, primitive sequencing) was listed
-  here in the original freeze but is **deferred post-V1** (amended
-  2026-11-26, full spec audit: the code never contained it, and the
-  honest V1 behaviour is comparison, not retargeting).
+  discrepancy engine. **Deterministic trajectory retargeting is IN
+  V1** (amended back 2026-11-26, on the owner's order, reversing
+  the same-day audit deferral): `retarget.py` maps the recorded
+  path into the gantry's coordinate frame (vertical-anchored
+  similarity transform), clamps and counts points outside the
+  reach envelope (refusing in plain words when more than a
+  quarter of the path is out of reach), and time-warps the
+  trajectory to the safety kernel's speed cap with the path
+  untouched -- the result records "path exact; timing adjusted"
+  versus "path and timing exact" honestly. Simulate shows the
+  machine following the human's path with the fidelity report;
+  lessons built from a project with a demonstration replay the
+  retargeted trajectory. (Primitive sequencing of the trajectory
+  into controller commands remains post-V1.)
 - **Template-based codegen** over the safety-kernel primitive API, plus a
   generated control panel. Muse Spark (via the owner's Cloudflare Worker)
   may *draft* text/code for review; offline fallbacks exist for every
-  Muse-assisted feature.
+  Muse-assisted feature. The same Worker seam carries the **Muse
+  double-checker** (added 2026-11-26): an advisory second opinion at
+  five build steps (draft, verification, code, lesson, risk) that can
+  agree or flag concerns for the teacher -- never change, block, or
+  override the local result, and never touch the safety kernel. No
+  endpoint exists yet; until the owner configures one, checks report
+  NOT SET UP and every step proceeds locally.
 - **Safety kernel**: controller-enforced speed/force caps, monitored stop,
   generated risk assessment with a blocking teacher sign-off gate,
   Ed25519-signed `.tmachine` packages with hash verification.
 - **Firestore metadata sync** (free Spark plan), behind a
   feature flag, with a hard offline gate: every core workflow must work
-  with the network off and Firebase disabled. **Firebase Auth is not
-  integrated in this build** (amended 2026-11-26): sync is
-  unauthenticated REST, and production rules refuse it until a
-  sign-in surface exists — future scope.
+  with the network off and Firebase disabled. **Firebase Auth IS
+  integrated** (amended 2026-11-26, resolving the earlier
+  not-integrated amendment): an email/password sign-in surface in
+  the shell (stdlib Identity Toolkit REST), and sync reads/writes
+  the signed-in user's own subtree `users/{uid}/sync/...` under
+  per-user Firestore rules. Signed out, sync reports NOT SIGNED IN
+  in plain words and every other workflow is unaffected.
 - **QNX target**: the timing-critical controller loop exists as C in
   this package (`qnx/`, host build + test suite green); the SDP 8.0
   cross-build and QEMU run are the pending step (they need the
@@ -45,8 +63,11 @@ slice + the generic architecture.
   Category: **Robotics & Medical**.
 - **Lean mode from day one** (target hardware: Core i3/i5, 4 GB RAM,
   Windows 10): small models only (Whisper *base*, downloaded on first
-  use; SAM 2.1 was planned here but is **not integrated in this
-  build** — perception is the colour-prompt object track),
+  use; SAM 2.1 **is integrated** as the click tracker (amended
+  2026-11-26, resolving the earlier not-integrated amendment):
+  the teacher clicks the object on the first frame and the
+  segmentation model follows it, alongside the colour-prompt
+  track; its weights download once on first use),
   sequential model load/unload, keyframe sampling, CPU-first inference,
   precomputed simulation replay for lesson playback on school PCs.
 - **Lesson playback** on low-end school PCs (no engine, no models, no

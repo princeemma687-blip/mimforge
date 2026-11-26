@@ -21,6 +21,7 @@ from PySide6.QtCore import QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFrame,
     QGraphicsOpacityEffect,
@@ -369,6 +370,7 @@ class MainWindow(QMainWindow):
         projects_dir: str | Path | None = None,
         parent: QWidget | None = None,
         sync_backend_factory=None,
+        auth_client_factory=None,
     ) -> None:
         super().__init__(parent)
         self.projects_dir = (
@@ -390,7 +392,21 @@ class MainWindow(QMainWindow):
         self.sync_backend_factory = sync_backend_factory
         self._metadata_sync = MetadataSync()
         self._sync_on = False
+        # Sign-in state: the auth client is built lazily from the
+        # same local settings as sync, and its saved session is
+        # restored when the window opens. Sign-in gates nothing but
+        # live sync; every other part of the app ignores it.
+        self.auth_client_factory = auth_client_factory
+        self._firebase_config = None
+        self._firebase_config_loaded = False
+        self._auth_client = None
         self.last_import_report: dict | None = None
+        self.last_trajectory = None
+        # The Muse double-checker (advisory second opinion): built
+        # from the same Worker address as the drafting advisor.
+        # Tests substitute a service over a fake client at this
+        # attribute; the checker never gates anything.
+        self.checker_service = self._init_checker()
         self.setWindowTitle("MIMFORGE — TEACHING MACHINE STUDIO  ·  v0.0.1")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(1100, 700)
@@ -433,6 +449,16 @@ class MainWindow(QMainWindow):
         self.motion_button.clicked.connect(self._toggle_motion)
         rail_layout.addWidget(self.motion_button)
         self._refresh_motion_button()
+        self.checker_button = QPushButton()
+        self.checker_button.setFont(mono_font(9, bold=True))
+        self.checker_button.clicked.connect(self._toggle_checker)
+        rail_layout.addWidget(self.checker_button)
+        self.checker_status_label = QLabel()
+        self.checker_status_label.setFont(mono_font(8))
+        self.checker_status_label.setStyleSheet(f"color: {MUTED};")
+        self.checker_status_label.setWordWrap(True)
+        rail_layout.addWidget(self.checker_status_label)
+        self._refresh_checker_ui()
         root.addWidget(rail)
 
         # Central drafting canvas with stacked section panels.
@@ -501,6 +527,10 @@ class MainWindow(QMainWindow):
         self.design_panel.show_design(
             None, self.current_params(), self.bom_tables()
         )
+        # Restore any saved sign-in so the account plate is honest
+        # from the first frame. Never raises: no settings simply
+        # means NOT SIGNED IN.
+        self._init_auth()
 
     # -------------------------------------------------------------- motion
 
@@ -512,6 +542,164 @@ class MainWindow(QMainWindow):
     def _toggle_motion(self) -> None:
         set_motion_enabled(not motion_enabled())
         self._refresh_motion_button()
+
+    # ------------------------------------------------------------- checker
+
+    def _init_checker(self):
+        """The Muse double-checker service: a client over the
+        owner's Worker address (the same MIMFORGE_WORKER_URL the
+        drafting advisor uses) when one is configured, otherwise
+        no client -- checks then report NOT SET UP and cost
+        nothing. The daily counter lives beside the projects."""
+        from ..checker import CheckerClient, CheckerService
+
+        url = os.environ.get("MIMFORGE_WORKER_URL", "").strip()
+        client = CheckerClient(url) if url else None
+        return CheckerService(
+            self.projects_dir.parent / "checker-state.json",
+            client=client,
+        )
+
+    def _refresh_checker_ui(self) -> None:
+        service = self.checker_service
+        if not service.configured:
+            self.checker_button.setText("MUSE CHECK: NOT SET UP")
+            self.checker_status_label.setText(
+                "NO ENDPOINT CONFIGURED — LOCAL RESULTS STAND"
+            )
+            return
+        self.checker_button.setText(
+            "MUSE CHECK: ON" if service.enabled else "MUSE CHECK: OFF"
+        )
+        self.checker_status_label.setText(
+            f"CHECKS TODAY: {service.calls_today} OF "
+            f"{service.daily_cap}"
+        )
+
+    def _toggle_checker(self) -> None:
+        service = self.checker_service
+        if not service.configured:
+            self.statusBar().showMessage(
+                "MUSE CHECK IS NOT SET UP — NO ENDPOINT IS "
+                "CONFIGURED; LOCAL RESULTS STAND"
+            )
+            return
+        service.set_enabled(not service.enabled)
+        self._refresh_checker_ui()
+
+    def _run_checker(self, step: str, summary: dict):
+        """Ask the double-checker for a second opinion on a step
+        that just completed locally. The local result is already
+        final when this runs: an AGREE is noted, a FLAG is shown
+        to the teacher and stored with the project, and every
+        other outcome simply leaves the step as it was. Never
+        raises."""
+        try:
+            verdict = self.checker_service.check(step, summary)
+        except Exception:  # the checker must never break a step
+            return None
+        self._refresh_checker_ui()
+        if verdict.verdict in ("agree", "flag"):
+            if self.current_project is not None:
+                record = self.current_project.get_record(
+                    "checks", "current"
+                ) or {}
+                entries = list(record.get("entries", []))
+                entries.append(verdict.to_dict())
+                self.current_project.put_record(
+                    "checks", "current", {"entries": entries[-100:]}
+                )
+                self.current_project.save()
+            if verdict.verdict == "flag":
+                self.statusBar().showMessage(verdict.plain())
+        return verdict
+
+    # ---------------------------------------------------------- trajectory
+
+    def _refresh_replay_button(self) -> None:
+        """The trajectory replay is available exactly when the
+        current project holds a demonstration with a track."""
+        available = False
+        if self.current_project is not None:
+            demo = self.current_project.get_record(
+                "demonstration", "current"
+            )
+            available = bool(demo and demo.get("track"))
+        self.simulate_panel.set_replay_available(available)
+
+    def _trajectory_replay(self, result):
+        """The retargeted trajectory as a lesson replay (the same
+        track type Playback animates), labelled with its honest
+        timing note."""
+        from ..playback import LessonReplay
+
+        label = (
+            "MACHINE FOLLOWING YOUR RECORDED DEMONSTRATION — "
+            + result.timing_note
+        )
+        if result.clamped_points:
+            label += (
+                f" — {result.clamped_points} POINTS CLAMPED TO "
+                "THE REACH ENVELOPE"
+            )
+        times = [p[0] for p in result.points]
+        deltas = [
+            b - a for a, b in zip(times, times[1:]) if b > a
+        ]
+        sample_hz = 1.0 / (sum(deltas) / len(deltas)) if deltas else 10.0
+        return LessonReplay.from_points(
+            result.points,
+            label=label,
+            sample_hz=sample_hz,
+            x_label="carriage (mm)",
+            y_label="drop (mm)",
+        )
+
+    def _retarget_current_demonstration(self):
+        """Retarget the current project's recorded demonstration
+        onto the current design. Returns (result, None) or
+        (None, plain_reason)."""
+        from ..retarget import RetargetError, retarget_track
+
+        if self.current_project is None:
+            return None, "NO PROJECT OPEN — CREATE OR OPEN A PROJECT FIRST"
+        demo = self.current_project.get_record("demonstration", "current")
+        track = (demo or {}).get("track")
+        if not track:
+            return None, (
+                "NO RECORDED DEMONSTRATION — IMPORT ONE IN AUTHOR "
+                "FIRST"
+            )
+        try:
+            result = retarget_track(
+                track,
+                float(demo.get("width") or 0),
+                float(demo.get("height") or 0),
+                self.current_params(),
+                self.safety_panel.kernel.limits,
+            )
+        except RetargetError as exc:
+            return None, str(exc)
+        return result, None
+
+    def run_trajectory_replay(self):
+        """Retarget the recorded demonstration onto the machine
+        and show the machine following the human's actual path in
+        Simulate, with the fidelity report. The result is stored
+        on the project and reused by lesson building."""
+        panel = self.simulate_panel
+        result, reason = self._retarget_current_demonstration()
+        if result is None:
+            panel.show_message(f"TRAJECTORY REPLAY — {reason}")
+            return None
+        self.last_trajectory = result
+        if self.current_project is not None:
+            self.current_project.put_record(
+                "trajectory", "current", result.to_dict()
+            )
+            self.current_project.save()
+        panel.show_trajectory(result, self._trajectory_replay(result))
+        return result
 
     def _fade_stack(self, _index: int) -> None:
         """Section changes fade in instead of swapping instantly.
@@ -644,6 +832,16 @@ class MainWindow(QMainWindow):
         self.projects_panel.show_current(title)
         self.nav.setCurrentRow(SECTIONS.index("Author"))
         self.statusBar().showMessage(f"PROJECT CREATED — {title}")
+        self._run_checker(
+            "draft",
+            {
+                "steps": len(draft.steps),
+                "source": "template",
+                "transcript_engine": getattr(
+                    draft, "transcript_engine", "offline"
+                ),
+            },
+        )
         return project
 
     def open_project(self, project_id: str):
@@ -705,6 +903,8 @@ class MainWindow(QMainWindow):
         self.deliver_panel.show_project(
             project.title, self.current_assessment()
         )
+        self.last_trajectory = None
+        self._refresh_replay_button()
         if self._sync_on:
             self.push_sync_metadata()
 
@@ -799,6 +999,16 @@ class MainWindow(QMainWindow):
             return None
         self.last_verification = outcome
         self.simulate_panel.show_outcome(outcome)
+        self._run_checker(
+            "verification",
+            {
+                "teacher_value": outcome.teacher_fit.get("recovered_value"),
+                "simulated_value": outcome.sim_fit.get("recovered_value"),
+                "within_tolerance": outcome.passed,
+                "band_percent": outcome.band_percent,
+                "track_basis": outcome.track_basis,
+            },
+        )
         return outcome
 
     # ------------------------------------------------------- calibration
@@ -979,11 +1189,21 @@ class MainWindow(QMainWindow):
                 "STATUS: LESSON NOT BUILT — VERIFICATION NEEDED"
             )
             return None
+        replay = outcome.replay
+        trajectory, _reason = self._retarget_current_demonstration()
+        if trajectory is not None:
+            # A recorded demonstration exists: the lesson replays
+            # the machine following the human's actual path. The
+            # track's own label says so, with its timing note; the
+            # simulation track remains the fallback and is never
+            # presented as the demonstration.
+            replay = self._trajectory_replay(trajectory)
+            self.last_trajectory = trajectory
         lesson = build_lesson(
             self.current_template,
             table=outcome.table,
             graph=outcome.graph,
-            replay=outcome.replay,
+            replay=replay,
             verification_run=outcome.run,
         )
         # The teacher's approved wording is the lesson's wording.
@@ -1002,6 +1222,17 @@ class MainWindow(QMainWindow):
         self.load_lesson(lesson)
         self.statusBar().showMessage(
             f"LESSON BUILT — {lesson.step_count} STEPS — PLAYBACK READY"
+        )
+        self._run_checker(
+            "lesson",
+            {
+                "steps": lesson.step_count,
+                "seconds": round(lesson.total_seconds, 1),
+                "replay": (
+                    "demonstration" if trajectory is not None
+                    else "simulation"
+                ),
+            },
         )
         return lesson
 
@@ -1084,6 +1315,14 @@ class MainWindow(QMainWindow):
         self.current_project.save()
         panel.show_assessment(assessment)
         panel.set_status(f"SIGNED BY {name} — EXPORT IS OPEN")
+        self._run_checker(
+            "risk",
+            {
+                "hazards": len(assessment.hazards),
+                "signed": True,
+                "design_bound": bool(assessment.design_fingerprint),
+            },
+        )
         return assessment
 
     def generate_code(self, save_dir=None):
@@ -1105,6 +1344,15 @@ class MainWindow(QMainWindow):
             panel.set_status("CODE BLOCKED — IT FAILED THE SAFETY CHECK")
             return None
         panel.show_code(bundle)
+        self._run_checker(
+            "code",
+            {
+                "local_allowlist": "pass",
+                "files": 2,
+                "controller_chars": len(bundle.controller),
+                "panel_chars": len(bundle.control_panel),
+            },
+        )
         if save_dir is None:
             chosen = QFileDialog.getExistingDirectory(
                 self, "Save the generated code"
@@ -1197,13 +1445,114 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------ demonstration
 
-    def import_demonstration(self, path=None, transcriber=None):
+    def _sam_model_dir(self) -> Path:
+        """Where the click tracker's model files live for this
+        installation: a ``models`` folder beside the projects."""
+        from ..sam_tracker import weights_dir
+
+        return weights_dir(self.projects_dir.parent)
+
+    def _import_progress(self, panel, message: str) -> None:
+        """Long-running import work reports through the panel's
+        status line; the event loop gets a turn so the words are
+        actually painted while the work continues."""
+        panel.show_import_status(message)
+        QApplication.processEvents()
+
+    def _track_with_click_tracker(self, path, sam_point, sam_tracker_fn, panel):
+        """Run the segmentation tracker for an import.
+
+        Returns ``(track, coverage, note)`` -- with a None track
+        when the model ran but could not follow the object (the
+        import then continues, exactly as a failed colour track
+        does) -- or plain None when the import must stop before it
+        starts: the model could not be fetched, or no object was
+        clicked. The plain status is already showing in both of
+        those cases."""
+        from ..sam_tracker import (
+            SamError,
+            ensure_weights,
+            track_with_click,
+            weights_present,
+        )
+
+        folder = self._sam_model_dir()
+        progress = lambda frac, msg: self._import_progress(panel, msg)  # noqa: E731
+        if sam_tracker_fn is None and not weights_present(folder):
+            panel.show_import_status(
+                "THE CLICK TRACKER NEEDS ITS MODEL — DOWNLOADING "
+                "IT ONCE (ABOUT 130 MB)"
+            )
+            QApplication.processEvents()
+            try:
+                ensure_weights(folder, progress=progress)
+            except SamError as exc:
+                panel.show_import_status(
+                    f"{str(exc).upper()} — NOTHING WAS IMPORTED"
+                )
+                return None
+        point = sam_point
+        if point is None:
+            from ..perception import iter_frames
+
+            frame = None
+            for _index, _t, first in iter_frames(path, stride=1):
+                frame = first
+                break
+            if frame is None:
+                panel.show_import_status(
+                    "THAT FILE IS NOT A READABLE VIDEO — "
+                    "NOTHING WAS IMPORTED"
+                )
+                return None
+            from .sam_picker import SamPointDialog
+
+            dialog = SamPointDialog(frame, self)
+            if dialog.exec() != QDialog.Accepted or dialog.point is None:
+                panel.show_import_status(
+                    "NO OBJECT WAS CLICKED — NOTHING WAS IMPORTED"
+                )
+                return None
+            point = dialog.point
+        try:
+            if sam_tracker_fn is not None:
+                track = sam_tracker_fn(path, point, progress)
+            else:
+                from ..config import LEAN_PROFILE
+
+                track = track_with_click(
+                    path,
+                    point,
+                    stride=max(1, LEAN_PROFILE.keyframe_stride),
+                    folder=folder,
+                    progress=progress,
+                )
+        except Exception:  # the model reports, it never blocks
+            return None, None, "TRACKING: THE CLICK MODEL COULD NOT RUN ON THIS VIDEO"
+        coverage = track.coverage
+        if coverage > 0:
+            note = (
+                "TRACKING (CLICK MODEL): THE OBJECT WAS FOUND IN "
+                f"{coverage:.0%} OF THE FRAMES CHECKED"
+            )
+        else:
+            note = (
+                "TRACKING (CLICK MODEL): THE OBJECT WAS NOT FOUND "
+                "IN THE VIDEO"
+            )
+        return track, coverage, note
+
+    def import_demonstration(
+        self, path=None, transcriber=None, tracker=None, sam_point=None,
+        sam_tracker_fn=None,
+    ):
         """Import a demonstration recording for the current project:
-        read the video, track the object the template names, read
-        the spoken narration, and draft the steps from what was
-        actually said. Every failure is a plain status and leaves
-        the current draft untouched -- never a crash, never a
-        silent empty draft."""
+        read the video, track the object (the template's colour
+        band, or the object the teacher clicks when the click
+        tracker is chosen), read the spoken narration, and draft
+        the steps from what was actually said. Every failure is a
+        plain status and leaves the current draft untouched --
+        never a crash, never a silent empty draft."""
         import tempfile
 
         from ..config import LEAN_PROFILE
@@ -1258,12 +1607,24 @@ class MainWindow(QMainWindow):
                 )
             return None
 
-        # Tracking: the template names the object by colour (data);
-        # a template without one is read and transcribed only.
+        # Tracking: the teacher's chosen tracker. The click tracker
+        # segments the object the teacher clicks; the colour
+        # tracker follows the template's colour band (data) -- a
+        # template without one is read and transcribed only.
         coverage = None
         track = None
-        tracking_note = "TRACKING: NO COLOUR IS SET FOR THIS PRACTICAL"
-        prompt_data = (self.current_template_data or {}).get("tracking")
+        tracker_kind = tracker or panel.tracker_choice()
+        if tracker_kind == "sam":
+            outcome = self._track_with_click_tracker(
+                path, sam_point, sam_tracker_fn, panel
+            )
+            if outcome is None:
+                return None  # a plain status already explains why
+            track, coverage, tracking_note = outcome
+            prompt_data = None
+        else:
+            tracking_note = "TRACKING: NO COLOUR IS SET FOR THIS PRACTICAL"
+            prompt_data = (self.current_template_data or {}).get("tracking")
         if prompt_data:
             try:
                 prompt = ColourPrompt(
@@ -1365,6 +1726,7 @@ class MainWindow(QMainWindow):
                 "current",
                 {
                     "source_name": path.name,
+                    "tracker": tracker_kind,
                     "stored_media": stored_media,
                     "sha256": digest,
                     "duration_s": info.duration_s,
@@ -1396,6 +1758,7 @@ class MainWindow(QMainWindow):
             self.current_project.save()
         self.last_import_report = {
             "path": str(path),
+            "tracker": tracker_kind,
             "duration_s": info.duration_s,
             "has_audio": info.has_audio,
             "coverage": coverage,
@@ -1406,6 +1769,17 @@ class MainWindow(QMainWindow):
         panel.show_import_status(
             f"DEMONSTRATION IMPORTED — {len(draft.steps)} STEPS "
             f"DRAFTED FROM THE RECORDING · {tracking_note}{saved_note}"
+        )
+        self._refresh_replay_button()
+        self._run_checker(
+            "draft",
+            {
+                "steps": len(draft.steps),
+                "source": "demonstration",
+                "tracker": tracker_kind,
+                "coverage": coverage,
+                "transcript_engine": transcript.engine,
+            },
         )
         return draft
 
@@ -1462,6 +1836,124 @@ class MainWindow(QMainWindow):
         )
         return draft
 
+    # ---------------------------------------------------------------- auth
+
+    def _auth_session_path(self) -> Path:
+        """Where the saved sign-in lives: beside the projects
+        folder, inside the app's own data folder."""
+        return self.projects_dir.parent / "auth-session.json"
+
+    def _get_firebase_config(self):
+        """The local Firebase settings, loaded once per window
+        (None when this computer has none)."""
+        if not self._firebase_config_loaded:
+            from ..firebase_sync import load_firebase_config
+
+            self._firebase_config = load_firebase_config()
+            self._firebase_config_loaded = True
+        return self._firebase_config
+
+    def _get_auth_client(self):
+        """The auth client for this window, built lazily from the
+        local settings and restored from the saved session. None
+        when there are no settings to sign in against."""
+        if self._auth_client is not None:
+            return self._auth_client
+        config = self._get_firebase_config()
+        if config is None:
+            return None
+        factory = self.auth_client_factory
+        try:
+            if factory is not None:
+                client = factory(config, self._auth_session_path())
+            else:
+                from ..firebase_auth import FirebaseAuthClient
+
+                client = FirebaseAuthClient(
+                    config, session_path=self._auth_session_path()
+                )
+        except Exception:  # unusable settings -- plain words upstream
+            return None
+        try:
+            client.restore()
+        except Exception:  # a broken saved session means signed out
+            pass
+        self._auth_client = client
+        return client
+
+    def _init_auth(self) -> None:
+        """Show the account plate as it truly is at startup."""
+        try:
+            client = self._get_auth_client()
+        except Exception:
+            client = None
+        self._show_auth_status(client)
+
+    def _show_auth_status(self, client=None) -> None:
+        client = client if client is not None else self._auth_client
+        session = client.session if client is not None else None
+        if session is None:
+            self.projects_panel.show_auth_status("ACCOUNT: NOT SIGNED IN")
+        else:
+            self.projects_panel.show_auth_status(
+                f"ACCOUNT: SIGNED IN AS {session.email}"
+            )
+
+    @property
+    def signed_in_email(self) -> str | None:
+        client = self._get_auth_client()
+        session = client.session if client is not None else None
+        return session.email if session is not None else None
+
+    def _auth_call(self, action: str, email: str, password: str):
+        """Shared body of sign-in and account creation: plain
+        statuses only, and the password box is cleared as soon as
+        the attempt is made."""
+        from ..firebase_auth import AuthError
+
+        panel = self.projects_panel
+        panel.password_edit.clear()
+        client = self._get_auth_client()
+        if client is None:
+            panel.show_auth_status(
+                "ACCOUNT: NOT SET UP — NO SYNC SETTINGS FOUND ON "
+                "THIS COMPUTER"
+            )
+            return None
+        try:
+            if action == "create":
+                session = client.sign_up(email, password)
+            else:
+                session = client.sign_in(email, password)
+        except AuthError as exc:
+            panel.show_auth_status(f"ACCOUNT: {str(exc).upper()}")
+            return None
+        self._show_auth_status(client)
+        return session
+
+    def auth_sign_in(self, email: str, password: str):
+        """Sign in with an existing account (Projects panel)."""
+        return self._auth_call("sign_in", email, password)
+
+    def auth_create_account(self, email: str, password: str):
+        """Create the account and sign in with it (Projects panel)."""
+        return self._auth_call("create", email, password)
+
+    def auth_sign_out(self):
+        """Sign out on this computer. Live sync cannot outlive the
+        sign-in it rides on, so it turns off with it."""
+        panel = self.projects_panel
+        client = self._get_auth_client()
+        if client is not None:
+            client.sign_out()
+        if self._sync_on:
+            self._sync_on = False
+            self._metadata_sync = MetadataSync()
+            panel.show_sync(False, "SYNC: OFF — SIGNED OUT")
+        panel.password_edit.clear()
+        self._show_auth_status(client)
+        return None
+
     # ---------------------------------------------------------------- sync
 
     @property
@@ -1471,10 +1963,13 @@ class MainWindow(QMainWindow):
     def toggle_sync(self):
         """Turn metadata sync on or off. Turning it on loads the
         local sync settings; with none present the answer is a
-        plain NOT SET UP and sync stays off. Turning it on sends
-        the current project's details (title + template only --
-        metadata, never files)."""
-        from ..firebase_sync import FirestoreRestBackend, load_firebase_config
+        plain NOT SET UP and sync stays off. The real backend also
+        needs a signed-in account (the synced documents live in
+        that account's own space); signed out, the answer is a
+        plain NOT SIGNED IN and sync stays off. Turning it on sends
+        AND receives the current project's details (title +
+        template only -- metadata, never files)."""
+        from ..firebase_sync import FirestoreRestBackend
         from ..sync import SyncConfig
 
         panel = self.projects_panel
@@ -1483,7 +1978,7 @@ class MainWindow(QMainWindow):
             self._metadata_sync = MetadataSync()
             panel.show_sync(False, "SYNC: OFF")
             return False
-        config = load_firebase_config()
+        config = self._get_firebase_config()
         if config is None:
             panel.show_sync(
                 False,
@@ -1491,9 +1986,23 @@ class MainWindow(QMainWindow):
                 "THIS COMPUTER",
             )
             return False
-        factory = self.sync_backend_factory or (
-            lambda cfg: FirestoreRestBackend(cfg)
-        )
+        if self.sync_backend_factory is not None:
+            # The documented test seam: a backend was supplied, so
+            # it decides access; the sign-in requirement belongs to
+            # the real backend path below.
+            factory = self.sync_backend_factory
+        else:
+            client = self._get_auth_client()
+            if client is None or client.session is None:
+                panel.show_sync(
+                    False,
+                    "SYNC: NOT SIGNED IN — SIGN IN WITH YOUR "
+                    "ACCOUNT BELOW FIRST",
+                )
+                return False
+            factory = lambda cfg: FirestoreRestBackend(  # noqa: E731
+                cfg, auth_provider=client.active_session
+            )
         try:
             backend = factory(config)
         except Exception:  # settings unusable -- plain words, no crash
@@ -1510,8 +2019,37 @@ class MainWindow(QMainWindow):
         )
         self._sync_on = True
         panel.show_sync(True, "SYNC: ON")
-        self.push_sync_metadata()
+        pushed = self.push_sync_metadata()
+        if (
+            pushed is not None
+            and pushed.status == "synced"
+            and self.current_project is not None
+        ):
+            received = self.pull_sync_metadata()
+            if received is not None and received.status == "synced":
+                import time as _time
+
+                panel.show_sync(
+                    True,
+                    "SYNC: ON — PROJECT DETAILS SENT — SYNCED "
+                    + _time.strftime("%H:%M"),
+                )
+            elif received is not None and received.status == "failed":
+                panel.show_sync(
+                    True,
+                    "SYNC: ON — PROJECT DETAILS SENT — "
+                    "LAST RECEIVE FAILED",
+                )
         return True
+
+    def _project_sync_payload(self) -> dict:
+        return {
+            "title": self.current_project.title,
+            "template_id": (self.current_template_data or {}).get(
+                "template_id", ""
+            ),
+            "template_name": self.current_template_name,
+        }
 
     def push_sync_metadata(self):
         """Send the current project's details through the sync
@@ -1524,15 +2062,10 @@ class MainWindow(QMainWindow):
                 True, "SYNC: ON — OPEN A PROJECT TO SEND ITS DETAILS"
             )
             return None
-        payload = {
-            "title": self.current_project.title,
-            "template_id": (self.current_template_data or {}).get(
-                "template_id", ""
-            ),
-            "template_name": self.current_template_name,
-        }
         result = self._metadata_sync.push_metadata(
-            "projects", self.current_project.project_id, payload
+            "projects",
+            self.current_project.project_id,
+            self._project_sync_payload(),
         )
         if result.status == "synced":
             panel.show_sync(True, "SYNC: ON — PROJECT DETAILS SENT")
@@ -1545,6 +2078,18 @@ class MainWindow(QMainWindow):
             panel.show_sync(
                 True, "SYNC: ON — NOTHING SENT (SYNC IS OFF IN THE ENGINE)"
             )
+        return result
+
+    def pull_sync_metadata(self):
+        """Receive the current project's synced details. The shell
+        reports the outcome; the local project is never overwritten
+        by a pull -- sync carries the sharing index, local records
+        stay authoritative on this computer."""
+        if not self._sync_on or self.current_project is None:
+            return None
+        result, _payload = self._metadata_sync.pull_metadata(
+            "projects", self.current_project.project_id
+        )
         return result
 
 

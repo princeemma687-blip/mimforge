@@ -21,6 +21,10 @@ dependencies = [
     "numpy>=1.26",
     "build123d>=0.13",
     "mujoco>=3",
+    # Direct dependency since 2026-11-26: the SAM 2.1 click tracker
+    # runs its encoder/decoder ONNX graphs on it (it also arrives
+    # transitively via faster-whisper).
+    "onnxruntime>=1.20",
 ]
 
 [project.scripts]

@@ -111,6 +111,45 @@ class ProjectsPanel(QWidget):
         layout.addWidget(self.sync_button)
         self.sync_status_label = _status("SYNC: OFF")
         layout.addWidget(self.sync_status_label)
+
+        layout.addWidget(
+            _caption("ACCOUNT — ONLY FOR LIVE SYNC; THE APP WORKS SIGNED OUT")
+        )
+        self.email_edit = QLineEdit()
+        self.email_edit.setFont(mono_font(10))
+        self.email_edit.setPlaceholderText("Email address")
+        layout.addWidget(self.email_edit)
+        self.password_edit = QLineEdit()
+        self.password_edit.setFont(mono_font(10))
+        self.password_edit.setPlaceholderText("Password")
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.password_edit)
+        auth_row = QHBoxLayout()
+        self.sign_in_button = QPushButton("SIGN IN")
+        self.sign_in_button.setFont(mono_font(10, bold=True))
+        self.sign_in_button.clicked.connect(
+            lambda: self.host.auth_sign_in(
+                self.email_edit.text(), self.password_edit.text()
+            )
+        )
+        auth_row.addWidget(self.sign_in_button)
+        self.create_account_button = QPushButton("CREATE ACCOUNT")
+        self.create_account_button.setFont(mono_font(10, bold=True))
+        self.create_account_button.clicked.connect(
+            lambda: self.host.auth_create_account(
+                self.email_edit.text(), self.password_edit.text()
+            )
+        )
+        auth_row.addWidget(self.create_account_button)
+        self.sign_out_button = QPushButton("SIGN OUT")
+        self.sign_out_button.setFont(mono_font(10, bold=True))
+        self.sign_out_button.clicked.connect(
+            lambda: self.host.auth_sign_out()
+        )
+        auth_row.addWidget(self.sign_out_button)
+        layout.addLayout(auth_row)
+        self.auth_status_label = _status("ACCOUNT: NOT SIGNED IN")
+        layout.addWidget(self.auth_status_label)
         self.refresh()
 
     # ------------------------------------------------------------ refresh
@@ -146,6 +185,9 @@ class ProjectsPanel(QWidget):
     def show_sync(self, on: bool, text: str) -> None:
         self.sync_button.setText("SYNC: ON" if on else "SYNC: OFF")
         self.sync_status_label.setText(text)
+
+    def show_auth_status(self, text: str) -> None:
+        self.auth_status_label.setText(text)
 
     # -------------------------------------------------------------- slots
 
@@ -568,8 +610,23 @@ class SimulatePanel(QWidget):
             lambda: self.host.run_auto_adjust()
         )
         layout.addWidget(self.adjust_button)
+        self.replay_button = QPushButton("▶  RUN TRAJECTORY REPLAY")
+        self.replay_button.setFont(mono_font(10, bold=True))
+        self.replay_button.clicked.connect(
+            lambda: self.host.run_trajectory_replay()
+        )
+        self.replay_button.setEnabled(False)
+        layout.addWidget(self.replay_button)
         self.graph = FitGraphView()
         layout.addWidget(self.graph)
+        from .playback import ReplayView
+
+        self.trajectory_view = ReplayView()
+        layout.addWidget(self.trajectory_view)
+        self._traj_timer = QTimer(self)
+        self._traj_timer.setInterval(40)
+        self._traj_timer.timeout.connect(self._traj_tick)
+        self._traj_progress = 0.0
         self.results = QPlainTextEdit()
         self.results.setFont(mono_font(10))
         self.results.setReadOnly(True)
@@ -586,6 +643,7 @@ class SimulatePanel(QWidget):
     def show_project(self, title: str | None) -> None:
         self.project_label.setText(f"PROJECT: {title or '—'}")
         self.graph.clear()
+        self.trajectory_view.set_replay([], "")
         self.results.setPlainText("No run yet.")
         self.status_label.setText("STATUS: READY")
 
@@ -593,6 +651,49 @@ class SimulatePanel(QWidget):
         self.graph.clear()
         self.results.setPlainText(text)
         self.status_label.setText(f"STATUS: {text}")
+
+    def set_replay_available(self, available: bool) -> None:
+        """The trajectory replay needs a recorded demonstration in
+        the project; the host says when one exists."""
+        self.replay_button.setEnabled(bool(available))
+
+    def show_trajectory(self, result, replay) -> None:
+        """The retargeted trajectory: the animation in the replay
+        view (the same rendering Playback uses) and the fidelity
+        report in the readout -- the numbers, not adjectives."""
+        self.trajectory_view.set_replay(replay.points, replay.label)
+        lines = [
+            "TRAJECTORY REPLAY — THE MACHINE FOLLOWS YOUR "
+            "RECORDED DEMONSTRATION",
+            result.timing_note,
+            f"OF THE RECORDED PATH: {result.feasible_percent:.0f}% "
+            "INSIDE THE MACHINE'S REACH "
+            f"({result.clamped_points} OF {result.total_points} "
+            "POINTS CLAMPED TO THE EDGE)",
+            "PATH DEVIATION FROM CLAMPING: MEAN "
+            f"{result.deviation_mean_mm:.1f} MM — MAX "
+            f"{result.deviation_max_mm:.1f} MM",
+            f"FASTEST MACHINE SPEED: {result.peak_speed_mm_s:.0f} "
+            f"MM/S (SAFETY CAP {result.cap_mm_s:.0f} MM/S)",
+        ]
+        self.results.setPlainText("\n".join(lines))
+        self.status_label.setText(
+            "STATUS: TRAJECTORY REPLAY READY — "
+            + result.timing_note
+        )
+        if motion_enabled() and self.isVisible():
+            self._traj_progress = 0.0
+            self.trajectory_view.set_progress(0.0)
+            self._traj_timer.start()
+        else:
+            self.trajectory_view.set_progress(1.0)
+
+    def _traj_tick(self) -> None:
+        self._traj_progress += 0.025
+        if self._traj_progress >= 1.0:
+            self._traj_progress = 1.0
+            self._traj_timer.stop()
+        self.trajectory_view.set_progress(self._traj_progress)
 
     def show_outcome(self, outcome) -> None:
         points = [

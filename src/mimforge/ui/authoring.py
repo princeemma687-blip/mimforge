@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -67,6 +68,11 @@ class AuthoringPanel(QWidget):
         layout.addWidget(self.hint)
 
         import_row = QHBoxLayout()
+        self.tracker_combo = QComboBox()
+        self.tracker_combo.setFont(mono_font(10))
+        self.tracker_combo.addItem("TRACKER: COLOUR", "colour")
+        self.tracker_combo.addItem("TRACKER: CLICK (SAM 2.1)", "sam")
+        import_row.addWidget(self.tracker_combo)
         self.import_button = QPushButton("⇓  IMPORT DEMONSTRATION VIDEO")
         self.import_button.setFont(mono_font(10, bold=True))
         self.import_button.clicked.connect(self.import_requested.emit)
@@ -157,6 +163,12 @@ class AuthoringPanel(QWidget):
 
     def show_import_status(self, text: str) -> None:
         self.import_status_label.setText(text)
+
+    def tracker_choice(self) -> str:
+        """Which tracker the import should use: ``colour`` (the
+        template's colour band) or ``sam`` (the teacher clicks the
+        object and the segmentation model follows it)."""
+        return str(self.tracker_combo.currentData() or "colour")
 
     # ------------------------------------------------------------ internals
 
