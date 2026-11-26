@@ -34,6 +34,10 @@ class AuthoringPanel(QWidget):
     #: from the approved draft. The shell owns the assembly.
     build_lesson_requested = Signal()
 
+    #: Emitted when the teacher asks to import a demonstration
+    #: recording. The shell owns the file dialog and the pipeline.
+    import_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._draft: AuthoringDraft | None = None
@@ -50,6 +54,18 @@ class AuthoringPanel(QWidget):
         self.hint.setFont(mono_font(10, bold=True))
         self.hint.setStyleSheet(f"color: {ACCENT};")
         layout.addWidget(self.hint)
+
+        import_row = QHBoxLayout()
+        self.import_button = QPushButton("⇓  IMPORT DEMONSTRATION VIDEO")
+        self.import_button.setFont(mono_font(10, bold=True))
+        self.import_button.clicked.connect(self.import_requested.emit)
+        import_row.addWidget(self.import_button)
+        self.import_status_label = QLabel("")
+        self.import_status_label.setFont(mono_font(9, bold=True))
+        self.import_status_label.setStyleSheet(f"color: {ACCENT};")
+        self.import_status_label.setWordWrap(True)
+        import_row.addWidget(self.import_status_label, stretch=1)
+        layout.addLayout(import_row)
 
         body = QHBoxLayout()
         self.step_list = QListWidget()
@@ -121,6 +137,9 @@ class AuthoringPanel(QWidget):
 
     def current_draft(self) -> AuthoringDraft | None:
         return self._draft
+
+    def show_import_status(self, text: str) -> None:
+        self.import_status_label.setText(text)
 
     # ------------------------------------------------------------ internals
 

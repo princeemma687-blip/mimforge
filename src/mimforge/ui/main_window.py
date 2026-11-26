@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..safety import SafetyKernel
+from ..sync import MetadataSync
 from .motion import motion_enabled, set_motion_enabled
 
 # -- design tokens (single electric accent on dark charcoal) -------------
@@ -49,7 +50,15 @@ GRID_LINE = "#262B31"
 STOP_RED = "#E5484D"  # safety-signal exception: the E-stop only
 MONO_FAMILY = "Consolas, 'JetBrains Mono', 'DejaVu Sans Mono', monospace"
 
-SECTIONS = ["Projects", "Author", "Design", "Simulate", "Safety", "Playback"]
+SECTIONS = [
+    "Projects",
+    "Author",
+    "Design",
+    "Simulate",
+    "Safety",
+    "Deliver",
+    "Playback",
+]
 
 
 def _icon_png_path() -> Path:
@@ -359,6 +368,7 @@ class MainWindow(QMainWindow):
         self,
         projects_dir: str | Path | None = None,
         parent: QWidget | None = None,
+        sync_backend_factory=None,
     ) -> None:
         super().__init__(parent)
         self.projects_dir = (
@@ -371,6 +381,16 @@ class MainWindow(QMainWindow):
         self.current_template_data: dict | None = None
         self.current_template_name = ""
         self.last_verification = None
+        # Optional seams: a transcription engine for demonstration
+        # imports (the local speech model by default) and a factory
+        # that builds the sync backend from the loaded settings
+        # (the Firestore REST backend by default; tests substitute
+        # the in-memory backend at exactly this seam).
+        self.transcriber = None
+        self.sync_backend_factory = sync_backend_factory
+        self._metadata_sync = MetadataSync()
+        self._sync_on = False
+        self.last_import_report: dict | None = None
         self.setWindowTitle("MIMFORGE — TEACHING MACHINE STUDIO  ·  v0.0.1")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(1100, 700)
@@ -419,6 +439,7 @@ class MainWindow(QMainWindow):
         self.canvas = DraftingCanvas("ELEVATION — WORKSPACE")
         self.stack = QStackedWidget()
         # Local imports: ui panels import the design tokens from here.
+        from .deliver import DeliverPanel
         from .panels import DesignPanel, ProjectsPanel, SimulatePanel
         from .playback import LessonPlayer
 
@@ -433,15 +454,20 @@ class MainWindow(QMainWindow):
         self.author_panel.build_lesson_requested.connect(
             self.build_current_lesson
         )
+        self.author_panel.import_requested.connect(
+            lambda: self.import_demonstration()
+        )
         self.projects_panel = ProjectsPanel(self)
-        self.design_panel = DesignPanel()
+        self.design_panel = DesignPanel(self)
         self.simulate_panel = SimulatePanel(self)
+        self.deliver_panel = DeliverPanel(self)
         panels: dict[str, QWidget] = {
             "Projects": self.projects_panel,
             "Author": self.author_panel,
             "Design": self.design_panel,
             "Simulate": self.simulate_panel,
             "Safety": self.safety_panel,
+            "Deliver": self.deliver_panel,
             "Playback": self.playback_panel,
         }
         for section in SECTIONS:
@@ -626,6 +652,11 @@ class MainWindow(QMainWindow):
             project.title, self.current_params(), self.bom_totals()
         )
         self.simulate_panel.show_project(project.title)
+        self.deliver_panel.show_project(
+            project.title, self.current_assessment()
+        )
+        if self._sync_on:
+            self.push_sync_metadata()
 
     def _persist_current_draft(self) -> None:
         if self.current_project is None:
@@ -798,6 +829,38 @@ class MainWindow(QMainWindow):
         )
         return target
 
+    def export_cad(self, kind: str, path=None):
+        """Write the current design as a CAD file (STEP or STL) for
+        manufacture. With no path, a save dialog asks; cancelling is
+        a plain status, never a dead end."""
+        from ..design import build_gantry
+        from ..design import export_cad as _export_cad
+
+        suffix = ".step" if kind == "step" else ".stl"
+        if path is None:
+            chosen, _selected = QFileDialog.getSaveFileName(
+                self,
+                f"Export {kind.upper()}",
+                f"machine{suffix}",
+                f"CAD files (*{suffix})",
+            )
+            if not chosen:
+                self.design_panel.set_status("EXPORT CANCELLED")
+                return None
+            path = chosen
+        target = Path(path)
+        if target.suffix.lower() not in (".step", ".stp", ".stl"):
+            target = target.with_suffix(suffix)
+        try:
+            out = _export_cad(build_gantry(self.current_params()), target)
+        except Exception:  # plain-words failure, never a crash
+            self.design_panel.set_status(
+                "EXPORT FAILED — THE FILE COULD NOT BE WRITTEN"
+            )
+            return None
+        self.design_panel.set_status(f"SAVED — {Path(out).name}")
+        return out
+
     # ------------------------------------------------------------- lesson
 
     def build_current_lesson(self):
@@ -850,6 +913,386 @@ class MainWindow(QMainWindow):
             f"LESSON BUILT — {lesson.step_count} STEPS — PLAYBACK READY"
         )
         return lesson
+
+    # ------------------------------------------------------------ delivery
+
+    def current_assessment(self):
+        """The current project's risk assessment: the stored one
+        when its hazards still match the template's (a sign-off only
+        ever covers the hazards it was given), otherwise a fresh,
+        unsigned assessment built from the template data."""
+        from ..delivery import assessment_from_dict, build_assessment
+
+        if self.current_project is None or self.current_template_data is None:
+            return None
+        fresh = build_assessment(self.current_template_data)
+        record = self.current_project.get_record("risk", "current")
+        if record is not None:
+            try:
+                stored = assessment_from_dict(record)
+            except (KeyError, TypeError, ValueError):
+                return fresh
+            fresh_hazards = {
+                (h.id, h.description, h.severity, h.likelihood, h.mitigation)
+                for h in fresh.hazards
+            }
+            stored_hazards = {
+                (h.id, h.description, h.severity, h.likelihood, h.mitigation)
+                for h in stored.hazards
+            }
+            if stored_hazards == fresh_hazards:
+                return stored
+        return fresh
+
+    def sign_assessment(self, teacher_name: str):
+        """Teacher sign-off on the risk assessment, through the
+        gate's own signing path. The sign-off is stored on the
+        project, so it survives closing and reopening."""
+        from .. import risk
+        from ..delivery import assessment_to_dict
+
+        panel = self.deliver_panel
+        if self.current_project is None:
+            panel.set_status("OPEN A PROJECT FIRST")
+            return None
+        name = (teacher_name or "").strip()
+        if not name:
+            panel.set_status("TYPE THE TEACHER'S NAME TO SIGN")
+            return None
+        assessment = self.current_assessment()
+        risk.sign(assessment, name)
+        self.current_project.put_record(
+            "risk", "current", assessment_to_dict(assessment)
+        )
+        self.current_project.save()
+        panel.show_assessment(assessment)
+        panel.set_status(f"SIGNED BY {name} — EXPORT IS OPEN")
+        return assessment
+
+    def generate_code(self, save_dir=None):
+        """Generate the controller + control panel code, run the
+        safety check, show the verdict, and save both files. Code
+        that fails the check is blocked and never saved."""
+        from .. import delivery
+
+        panel = self.deliver_panel
+        if self.current_project is None or self.current_template_data is None:
+            panel.set_status("OPEN A PROJECT FIRST")
+            return None
+        try:
+            bundle = delivery.generate_checked_code(
+                self.current_template_data, self.current_params()
+            )
+        except delivery.DeliveryError as exc:
+            panel.show_code_failure(str(exc))
+            panel.set_status("CODE BLOCKED — IT FAILED THE SAFETY CHECK")
+            return None
+        panel.show_code(bundle)
+        if save_dir is None:
+            chosen = QFileDialog.getExistingDirectory(
+                self, "Save the generated code"
+            )
+            if not chosen:
+                panel.set_status(
+                    "CODE PASSED THE SAFETY CHECK — SAVE CANCELLED"
+                )
+                return bundle
+            save_dir = chosen
+        folder = Path(save_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "controller.py").write_text(
+            bundle.controller, encoding="utf-8"
+        )
+        (folder / "control_panel.py").write_text(
+            bundle.control_panel, encoding="utf-8"
+        )
+        panel.set_status(
+            f"CODE SAVED — CONTROLLER + CONTROL PANEL IN {folder.name}"
+        )
+        return bundle
+
+    def export_package(self, path=None):
+        """Export the signed machine package for the current
+        project. The sign-off gate refuses -- in plain words --
+        until a named teacher has signed the risk assessment."""
+        from .. import delivery, risk
+
+        panel = self.deliver_panel
+        if self.current_project is None or self.current_template_data is None:
+            panel.set_status("OPEN A PROJECT FIRST")
+            return None
+        assessment = self.current_assessment()
+        try:
+            bundle = delivery.generate_checked_code(
+                self.current_template_data, self.current_params()
+            )
+        except delivery.DeliveryError:
+            panel.set_status(
+                "EXPORT BLOCKED — THE GENERATED CODE FAILED ITS "
+                "SAFETY CHECK"
+            )
+            return None
+        if path is None:
+            chosen, _selected = QFileDialog.getSaveFileName(
+                self,
+                "Export signed package",
+                f"{_slugify(self.current_project.title)}.tmachine",
+                "Machine packages (*.tmachine)",
+            )
+            if not chosen:
+                panel.set_status("EXPORT CANCELLED")
+                return None
+            path = chosen
+        draft = self.author_panel.current_draft()
+        lesson = self.playback_panel.lesson
+        files = delivery.package_files(
+            project_id=self.current_project.project_id,
+            project_title=self.current_project.title,
+            template_name=self.current_template_name,
+            template_data=self.current_template_data,
+            draft=draft.to_dict() if draft is not None else None,
+            lesson=lesson.to_dict() if lesson is not None else None,
+            assessment=assessment,
+            params=self.current_params(),
+            code=bundle,
+        )
+        _private_pem, public_pem = delivery.load_or_create_keypair(
+            self.projects_dir / ".keys"
+        )
+        try:
+            out = delivery.export_signed_package(
+                files, assessment, path, _private_pem
+            )
+        except risk.ExportBlocked:
+            panel.set_status(
+                "EXPORT REFUSED — A TEACHER MUST SIGN THE RISK "
+                "ASSESSMENT FIRST"
+            )
+            return None
+        # The check key travels beside the package so whoever
+        # receives it can verify the signature before trusting it.
+        Path(str(out) + ".pubkey.pem").write_bytes(public_pem)
+        panel.set_status(
+            f"PACKAGE SAVED — {Path(out).name} — SIGNED AND SEALED"
+        )
+        return out
+
+    # ------------------------------------------------------ demonstration
+
+    def import_demonstration(self, path=None, transcriber=None):
+        """Import a demonstration recording for the current project:
+        read the video, track the object the template names, read
+        the spoken narration, and draft the steps from what was
+        actually said. Every failure is a plain status and leaves
+        the current draft untouched -- never a crash, never a
+        silent empty draft."""
+        import tempfile
+
+        from ..config import LEAN_PROFILE
+        from ..narration import (
+            TranscriptionError,
+            WhisperTranscriber,
+            extract_audio,
+        )
+        from ..perception import (
+            ColourPrompt,
+            EngineUnavailable,
+            IngestError,
+            probe_video,
+            track_object,
+        )
+        from ..structuring import build_draft
+
+        panel = self.author_panel
+        if self.current_template is None:
+            panel.show_import_status(
+                "OPEN A PROJECT BEFORE IMPORTING A DEMONSTRATION"
+            )
+            return None
+        if path is None:
+            chosen, _selected = QFileDialog.getOpenFileName(
+                self,
+                "Import demonstration video",
+                "",
+                "Videos (*.mp4 *.mov *.mkv *.webm *.avi);;All files (*)",
+            )
+            if not chosen:
+                panel.show_import_status("IMPORT CANCELLED")
+                return None
+            path = chosen
+        path = Path(path)
+        try:
+            info = probe_video(path)
+        except EngineUnavailable:
+            panel.show_import_status(
+                "THE VIDEO TOOLS ARE NOT AVAILABLE ON THIS COMPUTER"
+            )
+            return None
+        except IngestError as exc:
+            if "not found" in str(exc):
+                panel.show_import_status(
+                    "THAT FILE WAS NOT FOUND — NOTHING WAS IMPORTED"
+                )
+            else:
+                panel.show_import_status(
+                    "THAT FILE IS NOT A READABLE VIDEO — "
+                    "NOTHING WAS IMPORTED"
+                )
+            return None
+
+        # Tracking: the template names the object by colour (data);
+        # a template without one is read and transcribed only.
+        coverage = None
+        tracking_note = "TRACKING: NO COLOUR IS SET FOR THIS PRACTICAL"
+        prompt_data = (self.current_template_data or {}).get("tracking")
+        if prompt_data:
+            try:
+                prompt = ColourPrompt(
+                    name=str(prompt_data.get("name", "object")),
+                    bgr_low=tuple(prompt_data["bgr_low"]),
+                    bgr_high=tuple(prompt_data["bgr_high"]),
+                    min_pixels=int(prompt_data.get("min_pixels", 20)),
+                )
+                track = track_object(
+                    path,
+                    prompt,
+                    stride=max(1, LEAN_PROFILE.keyframe_stride),
+                )
+                coverage = track.coverage
+                if coverage > 0:
+                    tracking_note = (
+                        "TRACKING: THE OBJECT WAS FOUND IN "
+                        f"{coverage:.0%} OF THE VIDEO"
+                    )
+                else:
+                    tracking_note = (
+                        "TRACKING: THE OBJECT WAS NOT FOUND IN THE VIDEO"
+                    )
+            except Exception:  # tracking reports, it never blocks
+                tracking_note = "TRACKING: COULD NOT RUN ON THIS VIDEO"
+
+        engine = transcriber or self.transcriber or WhisperTranscriber(
+            model=LEAN_PROFILE.speech_model
+        )
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                audio_path = extract_audio(path, Path(tmp) / "audio.wav")
+                transcript = engine.transcribe(audio_path)
+        except (TranscriptionError, EngineUnavailable):
+            panel.show_import_status(
+                "NO SPEECH COULD BE READ FROM THIS VIDEO — "
+                f"THE DRAFT WAS NOT CHANGED · {tracking_note}"
+            )
+            return None
+        if not transcript.segments or not transcript.full_text.strip():
+            panel.show_import_status(
+                "THE VIDEO'S SPEECH CAME OUT EMPTY — "
+                f"THE DRAFT WAS NOT CHANGED · {tracking_note}"
+            )
+            return None
+        draft = build_draft(
+            self.current_template, transcript, track_coverage=coverage
+        )
+        self.author_panel.load_draft(draft)
+        if self.current_project is not None:
+            self.current_project.put_record(
+                "draft", "current", draft.to_dict()
+            )
+            self.current_project.save()
+        self.last_import_report = {
+            "path": str(path),
+            "duration_s": info.duration_s,
+            "has_audio": info.has_audio,
+            "coverage": coverage,
+            "transcript_engine": transcript.engine,
+            "steps": len(draft.steps),
+        }
+        panel.show_import_status(
+            f"DEMONSTRATION IMPORTED — {len(draft.steps)} STEPS "
+            f"DRAFTED FROM THE RECORDING · {tracking_note}"
+        )
+        return draft
+
+    # ---------------------------------------------------------------- sync
+
+    @property
+    def sync_on(self) -> bool:
+        return self._sync_on
+
+    def toggle_sync(self):
+        """Turn metadata sync on or off. Turning it on loads the
+        local sync settings; with none present the answer is a
+        plain NOT SET UP and sync stays off. Turning it on sends
+        the current project's details (title + template only --
+        metadata, never files)."""
+        from ..firebase_sync import FirestoreRestBackend, load_firebase_config
+        from ..sync import SyncConfig
+
+        panel = self.projects_panel
+        if self._sync_on:
+            self._sync_on = False
+            self._metadata_sync = MetadataSync()
+            panel.show_sync(False, "SYNC: OFF")
+            return False
+        config = load_firebase_config()
+        if config is None:
+            panel.show_sync(
+                False,
+                "SYNC: NOT SET UP — NO SYNC SETTINGS FOUND ON "
+                "THIS COMPUTER",
+            )
+            return False
+        factory = self.sync_backend_factory or (
+            lambda cfg: FirestoreRestBackend(cfg)
+        )
+        try:
+            backend = factory(config)
+        except Exception:  # settings unusable -- plain words, no crash
+            panel.show_sync(
+                False, "SYNC: COULD NOT START — THE SETTINGS COULD NOT BE USED"
+            )
+            return False
+        self._metadata_sync = MetadataSync(
+            SyncConfig(
+                enabled=True,
+                project_id=config.project_id,
+                backend=backend,
+            )
+        )
+        self._sync_on = True
+        panel.show_sync(True, "SYNC: ON")
+        self.push_sync_metadata()
+        return True
+
+    def push_sync_metadata(self):
+        """Send the current project's details through the sync
+        layer and show the outcome in plain words."""
+        panel = self.projects_panel
+        if not self._sync_on:
+            return None
+        if self.current_project is None:
+            panel.show_sync(
+                True, "SYNC: ON — OPEN A PROJECT TO SEND ITS DETAILS"
+            )
+            return None
+        payload = {
+            "title": self.current_project.title,
+            "template_id": (self.current_template_data or {}).get(
+                "template_id", ""
+            ),
+            "template_name": self.current_template_name,
+        }
+        result = self._metadata_sync.push_metadata(
+            "projects", self.current_project.project_id, payload
+        )
+        if result.status == "synced":
+            panel.show_sync(True, "SYNC: ON — PROJECT DETAILS SENT")
+        elif result.status == "failed":
+            detail = result.detail.removeprefix("backend error: ")
+            panel.show_sync(
+                True, f"SYNC: ON — LAST SEND FAILED — {detail.upper()}"
+            )
+        return result
 
 
 def run() -> int:

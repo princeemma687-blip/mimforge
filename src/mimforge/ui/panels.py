@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -91,6 +92,14 @@ class ProjectsPanel(QWidget):
 
         self.status_label = _status("STATUS: NO PROJECT OPEN")
         layout.addWidget(self.status_label)
+
+        layout.addWidget(_caption("METADATA SYNC — OPTIONAL, OFF BY DEFAULT"))
+        self.sync_button = QPushButton("SYNC: OFF")
+        self.sync_button.setFont(mono_font(10, bold=True))
+        self.sync_button.clicked.connect(lambda: self.host.toggle_sync())
+        layout.addWidget(self.sync_button)
+        self.sync_status_label = _status("SYNC: OFF")
+        layout.addWidget(self.sync_status_label)
         self.refresh()
 
     # ------------------------------------------------------------ refresh
@@ -122,6 +131,10 @@ class ProjectsPanel(QWidget):
 
     def show_current(self, title: str) -> None:
         self.status_label.setText(f"STATUS: CURRENT PROJECT — {title}")
+
+    def show_sync(self, on: bool, text: str) -> None:
+        self.sync_button.setText("SYNC: ON" if on else "SYNC: OFF")
+        self.sync_status_label.setText(text)
 
     # -------------------------------------------------------------- slots
 
@@ -266,10 +279,12 @@ class GantryElevationView(QWidget):
 
 
 class DesignPanel(QWidget):
-    """The current machine design + bill of materials (display only)."""
+    """The current machine design + bill of materials, with the
+    CAD files (STEP / STL) exportable for manufacture."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, host=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.host = host
         layout = QVBoxLayout(self)
         layout.addWidget(_plate("DESIGN — MACHINE + BOM"))
         self.project_label = _status("PROJECT: —")
@@ -280,6 +295,29 @@ class DesignPanel(QWidget):
         self.readout.setFont(mono_font(10))
         self.readout.setReadOnly(True)
         layout.addWidget(self.readout, stretch=1)
+        export_row = QHBoxLayout()
+        self.export_step_button = QPushButton("⬆  EXPORT STEP")
+        self.export_step_button.setFont(mono_font(10, bold=True))
+        self.export_step_button.clicked.connect(
+            lambda: self.host.export_cad("step")
+            if self.host is not None
+            else None
+        )
+        export_row.addWidget(self.export_step_button)
+        self.export_stl_button = QPushButton("⬆  EXPORT STL")
+        self.export_stl_button.setFont(mono_font(10, bold=True))
+        self.export_stl_button.clicked.connect(
+            lambda: self.host.export_cad("stl")
+            if self.host is not None
+            else None
+        )
+        export_row.addWidget(self.export_stl_button)
+        layout.addLayout(export_row)
+        self.status_label = _status("STATUS: READY")
+        layout.addWidget(self.status_label)
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(f"STATUS: {text}")
 
     def show_design(self, project_title: str | None, params, tier_totals) -> None:
         self.project_label.setText(

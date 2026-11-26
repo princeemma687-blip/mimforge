@@ -24,13 +24,16 @@ def app():
 def test_window_builds_with_all_sections(app):
     window = MainWindow()
     assert "MIMFORGE" in window.windowTitle()
-    assert window.nav.count() == len(SECTIONS) == 6
-    assert window.stack.count() == 6
+    assert window.nav.count() == len(SECTIONS) == 7
+    assert window.stack.count() == 7
     assert window.current_section() == "Projects"
     window.nav.setCurrentRow(4)
     assert window.current_section() == "Safety"
     assert window.safety_panel.estop_button.isEnabled()
     window.nav.setCurrentRow(5)
+    assert window.current_section() == "Deliver"
+    assert window.deliver_panel.export_button.isEnabled()
+    window.nav.setCurrentRow(6)
     assert window.current_section() == "Playback"
     assert window.playback_panel.play_button.isEnabled()
 
