@@ -41,6 +41,29 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _check_project_id(project_id: str) -> None:
+    """A project id names ONE folder under the projects directory:
+    no separators, no parent references, nothing absolute."""
+    if (
+        not project_id
+        or project_id in (".", "..")
+        or "/" in project_id
+        or "\\" in project_id
+    ):
+        raise ProjectError(f"unsafe project id: {project_id!r}")
+
+
+def _check_media_rel_path(rel_path: str) -> None:
+    """A media path stays inside the project's media folder."""
+    parts = rel_path.replace("\\", "/").split("/")
+    if (
+        not rel_path
+        or rel_path.startswith("/")
+        or any(part in ("", ".", "..") for part in parts)
+    ):
+        raise ProjectError(f"unsafe media path: {rel_path!r}")
+
+
 @dataclass
 class Project:
     """An open project: its folder, its records, its media hashes."""
@@ -71,6 +94,7 @@ class Project:
     # -- media -----------------------------------------------------------
     def add_media(self, rel_path: str, data: bytes) -> str:
         """Store a media blob under the project folder; return its hash."""
+        _check_media_rel_path(rel_path)
         target = self.root / "media" / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
@@ -78,18 +102,70 @@ class Project:
         self.media[f"media/{rel_path}"] = digest
         return digest
 
+    def add_media_file(self, rel_path: str, source: str | Path) -> str:
+        """Copy a file into the project's media folder, streaming
+        (a demonstration video is never loaded whole into memory);
+        return its SHA-256, registered for the manifest seal."""
+        _check_media_rel_path(rel_path)
+        source = Path(source)
+        target = self.root / "media" / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        with source.open("rb") as src, target.open("wb") as dst:
+            for chunk in iter(lambda: src.read(1 << 20), b""):
+                digest.update(chunk)
+                dst.write(chunk)
+        self.media[f"media/{rel_path}"] = digest.hexdigest()
+        return digest.hexdigest()
+
     def read_media(self, rel_path: str) -> bytes:
+        _check_media_rel_path(rel_path)
         return (self.root / "media" / rel_path).read_bytes()
 
     # -- persistence -----------------------------------------------------
     def content_hash(self) -> str:
-        """Hash of the canonical logical content (records + media hashes)."""
-        return _sha256(_canonical_json({"records": self.records, "media": self.media}))
+        """Hash of the canonical logical content: the project's id
+        and title, its records, and its media hashes -- editing the
+        title directly in the database breaks the seal exactly
+        like editing a record does."""
+        return _sha256(
+            _canonical_json(
+                {
+                    "project_id": self.project_id,
+                    "title": self.title,
+                    "records": self.records,
+                    "media": self.media,
+                }
+            )
+        )
 
     def save(self) -> str:
-        """Write the database and manifest; return the content hash."""
+        """Write the database and manifest; return the content hash.
+
+        A damaged database file surfaces as ProjectError (the
+        shell's plain-refusal type), never as a raw sqlite error
+        escaping through a click handler."""
         digest = self.content_hash()
         db_path = self.root / DB_NAME
+        try:
+            self._write_db(db_path)
+        except sqlite3.Error as exc:
+            raise ProjectError(
+                f"project database is damaged: {self.project_id} ({exc})"
+            ) from None
+        manifest = {
+            "project_id": self.project_id,
+            "title": self.title,
+            "content_hash": digest,
+            "media": dict(sorted(self.media.items())),
+            "format_version": 1,
+        }
+        (self.root / MANIFEST_NAME).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return digest
+
+    def _write_db(self, db_path: Path) -> None:
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
@@ -114,29 +190,28 @@ class Project:
                         (kind, record_id, json.dumps(payload, sort_keys=True)),
                     )
             conn.commit()
-        manifest = {
-            "project_id": self.project_id,
-            "title": self.title,
-            "content_hash": digest,
-            "media": dict(sorted(self.media.items())),
-            "format_version": 1,
-        }
-        (self.root / MANIFEST_NAME).write_text(
-            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        return digest
 
     def verify(self) -> bool:
-        """True when the stored manifest hash matches the live content."""
+        """True when the stored manifest hash matches the live content.
+
+        A missing or unreadable manifest is simply "not verified":
+        this is a boolean check and it answers False, it does not
+        raise."""
         manifest_path = self.root / MANIFEST_NAME
         if not manifest_path.exists():
             return False
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return False
         return manifest.get("content_hash") == self.content_hash()
 
 
 def create_project(base_dir: str | Path, project_id: str, title: str) -> Project:
     """Create a fresh project folder. Fails if the id already exists."""
+    _check_project_id(project_id)
     root = Path(base_dir) / project_id
     if root.exists():
         raise ProjectError(f"project already exists: {project_id}")
@@ -148,8 +223,20 @@ def create_project(base_dir: str | Path, project_id: str, title: str) -> Project
     return project
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def open_project(base_dir: str | Path, project_id: str) -> Project:
-    """Open an existing project, verifying its manifest hash first."""
+    """Open an existing project, verifying its seal first: the
+    manifest hash over the records, AND every media file re-hashed
+    against the manifest -- a media file edited outside the app is
+    detected exactly like a record edit."""
+    _check_project_id(project_id)
     root = Path(base_dir) / project_id
     if not root.is_dir():
         raise ProjectError(f"no such project: {project_id}")
@@ -158,15 +245,31 @@ def open_project(base_dir: str | Path, project_id: str) -> Project:
         raise ProjectError(f"project has no database: {project_id}")
     records: dict[str, dict[str, Any]] = {}
     title = ""
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-        for key, value in conn.execute("SELECT key, value FROM meta"):
-            if key == "title":
-                title = value
-        for kind, record_id, payload in conn.execute(
-            "SELECT kind, id, payload FROM records"
-        ):
-            records.setdefault(kind, {})[record_id] = json.loads(payload)
-    manifest = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            for key, value in conn.execute("SELECT key, value FROM meta"):
+                if key == "title":
+                    title = value
+            for kind, record_id, payload in conn.execute(
+                "SELECT kind, id, payload FROM records"
+            ):
+                records.setdefault(kind, {})[record_id] = json.loads(payload)
+    except sqlite3.Error as exc:
+        raise ProjectError(
+            f"project database is damaged: {project_id} ({exc})"
+        ) from None
+    except ValueError:
+        raise ProjectError(
+            f"project database holds unreadable records: {project_id}"
+        ) from None
+    try:
+        manifest = json.loads(
+            (root / MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        raise ProjectError(
+            f"project manifest is missing or unreadable: {project_id}"
+        ) from None
     project = Project(
         root=root,
         project_id=project_id,
@@ -180,6 +283,17 @@ def open_project(base_dir: str | Path, project_id: str) -> Project:
             "does not match the database — the project may be damaged or "
             "have been edited outside the app"
         )
+    for rel_path, sealed_hash in project.media.items():
+        media_path = root / rel_path
+        if not media_path.is_file():
+            raise IntegrityError(
+                f"media file missing for project {project_id}: {rel_path}"
+            )
+        if _file_sha256(media_path) != sealed_hash:
+            raise IntegrityError(
+                f"media file changed outside the app for project "
+                f"{project_id}: {rel_path}"
+            )
     return project
 
 

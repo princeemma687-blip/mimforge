@@ -13,16 +13,19 @@ skills. It is built education-first (Nigerian schools, WAEC practicals), on a
 
 1. **Demonstration** — a teacher records (or imports) a video of a practical,
    with narration. The original is kept untouched and hashed.
-2. **Extraction** — the engine recovers the task-object and hand/body
-   trajectories from the video and transcribes the narration locally.
+2. **Extraction** — the engine tracks the task object the template
+   names by colour through the video, measures periodic motion when
+   the track supports it, and transcribes the narration locally.
+   (Hand/body pose tracking is not in this build — the scope freeze
+   keeps perception to the colour-prompt object track.)
 3. **Structuring** — the demonstration is drafted into a teachable sequence of
    steps (title, narration, expected observation, learner check, safety
    notes). **The teacher edits and approves every step — nothing
    auto-publishes.**
-4. **Design** — steps are matched to generic motion primitives; a machine is
-   designed from a parameterised platform library (bench gantry, bench arm,
-   presentation rig) fitted to the school's bench, power and budget tier, with
-   parametric CAD generated locally.
+4. **Design** — steps are matched to generic motion primitives; the
+   machine is designed from the parameterised bench-gantry platform
+   (the one platform in the V1 scope freeze) fitted to the school's
+   bench and budget tier, with parametric CAD generated locally.
 5. **Code + control panels** — a step-sequenced controller and a control panel
    are generated from templates. Generated code can only call the safety
    kernel's primitive API — it can never command motors directly or exceed
@@ -62,7 +65,9 @@ found.
   (see `docs/SBOM.md`). Muse Spark, when online, is reached only through
   the owner's Cloudflare Worker proxy (the API key is a Worker secret and
   never ships in the app) and is used for *advisory drafting only* — step
-  text, explanations, draft code for review. Every Muse-assisted feature
+  text, explanations, draft code for review. The app calls it only when
+  the Worker address is configured (`MIMFORGE_WORKER_URL`); unconfigured
+  — the default — drafting is fully offline. Every Muse-assisted feature
   has a local offline fallback; safety limits, interlocks, signing and risk
   assessment are deterministic local code, never an LLM.
 - **Firebase = Auth + Firestore metadata only** (free Spark plan). Firebase
@@ -78,8 +83,9 @@ found.
   bench platforms, controller-enforced speed/force caps, a physical
   E-stop and monitored stop, per-practical interlocks (heat, electricity,
   chemicals, sharps), simulation-first execution, signed packages, and
-  Nigeria Data Protection Act consent records — record the teacher, not
-  the students.
+  a filming protocol (`docs/FILMING_PROTOCOL.md`) that records the
+  teacher, not the students, with consent settled before filming
+  under Nigeria Data Protection Act guidance.
 
 ## Status
 
@@ -95,8 +101,9 @@ feature flag (offline-first), and the PySide6 mission-control shell.
 
 **Phase 2 — perception & structuring (done).** Video ingest (ffprobe) +
 colour-prompt object tracking with coverage reporting, periodic-motion
-analysis, local faster-whisper narration (with SRT / manual transcript
-fallbacks), transcript-to-template step segmentation with an offline
+analysis, local faster-whisper narration (with an SRT transcript-file
+fallback surfaced in the Author panel; typed manual lines exist in the
+engine), transcript-to-template step segmentation with an offline
 drafting fallback (Muse Spark advisor optional, never required), and
 the teacher authoring editor (approve / reject / edit each draft step).
 
@@ -139,37 +146,60 @@ the SDP 8.0 install + first real `qcc` cross-build + QEMU run
 need Prince's one-time myQNX sign-in; the C controller, host
 build and 93-check suite are done and in the repo.
 
+**Full spec audit (2026-11-26, done).** Every panel wired to its
+engine and click-tested; the seven engine-only features surfaced
+(Deliver section); the Design panel shows the full itemised
+materials list per tier and the exported package carries it; a
+line-by-line audit of the whole source tree against the platform
+spec, the plan and the scope freeze — safety-kernel hardening
+(non-finite commands and unconfigured force now fail closed),
+package/project integrity hardened (media re-hashed on open,
+single-read verified load), verification shape checks run against
+the recorded demonstration when one exists, and the docs (this
+file, `docs/SBOM.md`, `docs/SCOPE_FREEZE.md`, `docs/PACKAGING.md`)
+corrected wherever they claimed more than the code does —
+including three scope-freeze amendments: trajectory retargeting
+deferred post-V1, Firebase Auth not integrated, SAM 2.1 not
+integrated. The audit trail is in the project's progress log.
+
 Next: Phase 5 unblocks on Prince's sign-in (SDP install → `qcc`
 compile → QEMU run → timing log), then the Windows installer
 test + demo-video recording on his laptop, then submission
 (Prince registers from 10 Dec; internal submit-by 14 Dec).
 The test suite is the acceptance gate for every phase: `pytest` —
-currently 120 tests passing.
+currently 237 tests passing.
 
-## Build / run (placeholder)
-
-Application build instructions will land with Phase 1. For now:
-
-```powershell
-# Windows toolchain setup (UNTESTED on Windows — see the script header)
-./setup/windows-toolchain.ps1
-```
+## Build / run
 
 ```bash
-# Run the Phase 0 test suite (any platform with Python 3.11+)
+# Develop / run from source (Python 3.11+; FFmpeg on PATH)
 python -m venv .venv
 .venv/Scripts/activate        # Windows;  source .venv/bin/activate on POSIX
-pip install pytest
-pytest
+pip install -e .
+python -m mimforge            # launches the app
+python -m pytest              # the full acceptance suite
 ```
 
-## QNX target (placeholder note)
+```powershell
+# Windows installer: full test gate -> PyInstaller -> Inno Setup
+./setup/build-windows.ps1
+# The same build runs in GitHub Actions (.github/workflows/build-windows.yml)
+# and publishes the installer as the `mimforge-windows-installer` artifact.
+# Windows toolchain notes: setup/windows-toolchain.ps1
+# (UNTESTED on Windows — see the script header).
+```
 
-A later phase ports the timing-critical machine controller loop to C on
-**QNX 8.0** (cross-built with the free QNX SDP 8.0, run under QEMU), with
-the Windows app acting as the host tool that builds, deploys and tests it.
-Only the controller loop is ported — by design. Nothing QNX-related is in
-this package beyond this note.
+## QNX target
+
+The timing-critical controller loop exists as portable C under
+`qnx/`: a generic kernel (cycle counting, watchdogs, latching
+E-stop) with a host build and a 93-check test suite that runs
+anywhere (`make -C qnx`), plus `Makefile.qnx` for the SDP 8.0
+cross-build. The cross-build and the QEMU run are the one step
+still outstanding: they need the free QNX SDP 8.0 installed from a
+signed-in myQNX session (see `qnx/README.md`). Only the controller
+loop targets QNX — by design; the desktop app itself never needs
+QNX to run.
 
 ## Licence
 

@@ -38,6 +38,17 @@ class AuthoringPanel(QWidget):
     #: recording. The shell owns the file dialog and the pipeline.
     import_requested = Signal()
 
+    #: Emitted when the teacher asks to draft from a transcript
+    #: file instead (the fallback when a recording's speech cannot
+    #: be read on this computer). The shell owns the pipeline.
+    transcript_requested = Signal()
+
+    #: Emitted whenever the teacher changes the draft (approve,
+    #: reject, edit) so the shell can persist it immediately --
+    #: approvals must survive the window being closed at any
+    #: moment, not only the next project switch.
+    draft_changed = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._draft: AuthoringDraft | None = None
@@ -60,6 +71,12 @@ class AuthoringPanel(QWidget):
         self.import_button.setFont(mono_font(10, bold=True))
         self.import_button.clicked.connect(self.import_requested.emit)
         import_row.addWidget(self.import_button)
+        self.transcript_button = QPushButton("⇓  USE A TRANSCRIPT FILE")
+        self.transcript_button.setFont(mono_font(10, bold=True))
+        self.transcript_button.clicked.connect(
+            self.transcript_requested.emit
+        )
+        import_row.addWidget(self.transcript_button)
         self.import_status_label = QLabel("")
         self.import_status_label.setFont(mono_font(9, bold=True))
         self.import_status_label.setStyleSheet(f"color: {ACCENT};")
@@ -198,6 +215,7 @@ class AuthoringPanel(QWidget):
             step.status = "edited"  # approval no longer covers new wording
             self._refresh_row(self._current)
             self._refresh_status()
+        self.draft_changed.emit()
 
     def _approve(self) -> None:
         draft = self._draft
@@ -206,6 +224,7 @@ class AuthoringPanel(QWidget):
         draft.steps[self._current].status = "approved"
         self._refresh_row(self._current)
         self._refresh_status()
+        self.draft_changed.emit()
 
     def _reject(self) -> None:
         draft = self._draft
@@ -214,3 +233,4 @@ class AuthoringPanel(QWidget):
         draft.steps[self._current].status = "rejected"
         self._refresh_row(self._current)
         self._refresh_status()
+        self.draft_changed.emit()

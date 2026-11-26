@@ -80,3 +80,37 @@ def test_invalid_parameters_rejected(tmp_path):
         build_gantry(GantryParameters(suspension_range_mm=(1200.0, 1500.0)))
     with pytest.raises(ValueError):
         export_cad(build_gantry(GantryParameters()), tmp_path / "x.dxf")
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"spool_radius_mm": 0.0},
+        {"spool_length_mm": -5.0},
+        {"carriage_width_mm": 0.0},
+        {"carriage_height_mm": -1.0},
+        {"foot_height_mm": 0.0},
+    ],
+)
+def test_validate_rejects_every_nonsense_dimension(overrides):
+    """validate() covers ALL dimensions, not only the headline
+    ones: a zero/negative spool, carriage or foot dimension is
+    rejected before any CAD is built."""
+    params = GantryParameters(**overrides)
+    with pytest.raises(ValueError):
+        params.validate()
+
+
+def test_measurements_come_from_the_solids_not_the_parameters():
+    """Beam length and upright height are read back from the kept
+    sub-solids' bounding boxes (a non-default size proves the
+    numbers travel with the geometry)."""
+    design = build_gantry(
+        GantryParameters(span_mm=800.0, height_mm=1200.0)
+    )
+    measured = measure_gantry(design)
+    assert measured.beam_length_mm == pytest.approx(800.0, abs=1.0)
+    assert measured.upright_height_mm == pytest.approx(1200.0, abs=1.0)

@@ -55,51 +55,74 @@ def probe_video(path: str | Path) -> VideoInfo:
     ffprobe = shutil.which("ffprobe")
     if ffprobe is None:
         raise EngineUnavailable("ffprobe not found on PATH")
-    proc = subprocess.run(
-        [
-            ffprobe,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height,r_frame_rate,nb_frames",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "json",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height,r_frame_rate,nb_frames",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        raise IngestError(f"ffprobe timed out on {path}") from None
     if proc.returncode != 0:
         raise IngestError(f"ffprobe failed on {path}: {proc.stderr.strip()}")
-    data = json.loads(proc.stdout)
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        raise IngestError(
+            f"ffprobe returned unreadable output for {path}"
+        ) from None
     streams = data.get("streams", [])
     if not streams:
         raise IngestError(f"no video stream in {path}")
     stream = streams[0]
-    num, den = stream.get("r_frame_rate", "30/1").split("/")
-    fps = float(num) / float(den) if float(den) else 30.0
+    try:
+        num, den = str(stream.get("r_frame_rate", "30/1")).split("/")
+        fps = float(num) / float(den) if float(den) else 30.0
+    except (ValueError, ZeroDivisionError):
+        fps = 30.0  # an odd rate string must not kill the ingest
     # Audio presence: a second probe is cheap and keeps the first call simple.
-    audio = subprocess.run(
-        [ffprobe, "-v", "error", "-select_streams", "a", "-show_entries",
-         "stream=index", "-of", "csv=p=0", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        audio = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "a", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        has_audio = bool(audio.stdout.strip())
+    except subprocess.TimeoutExpired:
+        has_audio = False
+    try:
+        duration_s = float(data.get("format", {}).get("duration", 0.0))
+    except (TypeError, ValueError):
+        duration_s = 0.0
+    try:
+        frame_count = int(stream.get("nb_frames") or 0)
+    except (TypeError, ValueError):
+        frame_count = 0  # ffprobe reports "N/A" for some containers
     return VideoInfo(
         path=str(path),
-        duration_s=float(data["format"].get("duration", 0.0)),
+        duration_s=duration_s,
         fps=fps,
         width=int(stream.get("width", 0)),
         height=int(stream.get("height", 0)),
         codec=str(stream.get("codec_name", "")),
-        has_audio=bool(audio.stdout.strip()),
-        frame_count=int(stream.get("nb_frames") or 0),
+        has_audio=has_audio,
+        frame_count=frame_count,
     )
 
 
@@ -176,7 +199,10 @@ class TrackResult:
 
     @property
     def coverage(self) -> float:
-        """Fraction of frames in which the object was found."""
+        """Fraction of the frames EXAMINED in which the object was
+        found. With a stride above 1 the tracker examines every
+        stride-th frame, so this is a sampled coverage -- brief
+        losses between examined frames are not visible to it."""
         if self.frames_total == 0:
             return 0.0
         return self.frames_tracked / self.frames_total
@@ -230,6 +256,29 @@ def track_object(
     )
 
 
+def serialise_track(track: TrackResult, max_points: int = 600) -> dict:
+    """JSON-safe form of a track for a project's Demonstration
+    record: the coverage report plus the timed points, evenly
+    downsampled to at most ``max_points`` so a long recording stays
+    a small record. The full-resolution track is a working value;
+    the record keeps enough to re-plot and re-analyse the motion."""
+    n = int(track.times.size)
+    if n > max_points:
+        keep = np.linspace(0, n - 1, max_points).astype(int)
+    else:
+        keep = np.arange(n)
+    return {
+        "fps": float(track.fps),
+        "frames_examined": int(track.frames_total),
+        "frames_tracked": int(track.frames_tracked),
+        "coverage": float(track.coverage),
+        "gaps": [[int(a), int(b)] for a, b in track.gaps],
+        "times_s": [round(float(track.times[i]), 3) for i in keep],
+        "xs_px": [round(float(track.xs[i]), 1) for i in keep],
+        "ys_px": [round(float(track.ys[i]), 1) for i in keep],
+    }
+
+
 # ------------------------------------------------- periodic-motion analysis
 
 
@@ -254,6 +303,8 @@ def period_from_crossings(crossings: np.ndarray) -> tuple[float, np.ndarray]:
 def split_period_estimates(intervals: np.ndarray) -> tuple[float, float]:
     """Two period estimates from the first and second halves of the
     crossing intervals -- the analogue of timing the same run twice."""
+    if intervals.size == 0:
+        raise ValueError("no crossing intervals: no period estimates")
     if intervals.size < 2:
         only = float(intervals.mean())
         return only, only

@@ -4,8 +4,12 @@ A design may not be exported until a teacher has signed its risk
 assessment. The assessment merges the platform's generic base hazards
 with the hazards a practical's template declares (template data, never
 core code). Signing records the teacher, the time, and a SHA-256 over
-the canonical assessment text; any later change to the hazards breaks
-the signature and re-blocks export.
+the canonical assessment text -- which covers the hazards AND a
+fingerprint of the design parameters, so changing the design after
+sign-off breaks the seal exactly like changing a hazard does. The
+hash is tamper-EVIDENCE against drift and accidental edits; the
+cryptographic signature on an exported package is the Ed25519 one
+in :mod:`mimforge.signing`.
 
 Enforcement point: call :func:`assert_export_ready` before any
 :func:`mimforge.signing.export_package` of a machine design. The
@@ -86,6 +90,11 @@ class RiskAssessment:
     signed_by: str | None = None
     signed_at: str | None = None
     signoff_hash: str | None = None
+    #: Fingerprint of the design parameters this assessment was
+    #: made for ("" when the caller did not bind one). Part of the
+    #: sealed text: a sign-off covers ONE design, not any design
+    #: that happens to share its hazards.
+    design_fingerprint: str = ""
 
     @property
     def signed(self) -> bool:
@@ -96,6 +105,7 @@ class RiskAssessment:
         payload: dict[str, Any] = {
             "practical_id": self.practical_id,
             "platform_id": self.platform_id,
+            "design_fingerprint": self.design_fingerprint,
             "hazards": [
                 {
                     "id": h.id,
@@ -125,14 +135,22 @@ def generate_risk_assessment(
     platform_id: str,
     template_hazards: list[str] | None = None,
     template_id: str = "",
+    template_severity: str = "",
 ) -> RiskAssessment:
     """Merge platform base hazards with a template's declared hazards.
 
     Template hazards arrive as plain description strings (template
-    data); they are recorded at severity ``low`` with a mitigation that
-    the signing teacher must confirm -- the sign-off is the teacher
-    confirming them, not the app asserting them.
+    data). Their severity is the severity the template's own hazard
+    profile declares (``template_severity``); a template that
+    declares none defaults to ``low``. Either way the mitigation is
+    one the signing teacher must confirm -- the sign-off is the
+    teacher confirming them, not the app asserting them.
     """
+    severity = (
+        template_severity
+        if template_severity in ("low", "medium", "high")
+        else "low"
+    )
     hazards = [
         HazardEntry(
             id=row["id"],
@@ -149,7 +167,7 @@ def generate_risk_assessment(
             HazardEntry(
                 id=f"template-{index + 1}",
                 description=description,
-                severity="low",
+                severity=severity,
                 likelihood="possible",
                 mitigation="Mitigation confirmed by the signing teacher "
                 "at sign-off (see teacher notes on the template).",

@@ -87,6 +87,12 @@ def export_package(
     files: dict[str, bytes], out_path: str | Path, private_key_pem: bytes
 ) -> Path:
     """Write a signed ``.tmachine`` package. Returns the package path."""
+    clash = {MANIFEST_NAME, SIGNATURE_NAME} & set(files)
+    if clash:
+        raise PackageError(
+            "payload names collide with the reserved package entries: "
+            f"{sorted(clash)}"
+        )
     private_key = load_private_key(private_key_pem)
     manifest = build_manifest(files)
     signature = sign_manifest(manifest, private_key)
@@ -101,25 +107,44 @@ def export_package(
 
 
 def read_package(path: str | Path) -> dict[str, bytes]:
-    """Read every entry of a package into memory (no verification)."""
-    with zipfile.ZipFile(path, "r") as zf:
-        return {name: zf.read(name) for name in zf.namelist()}
+    """Read every entry of a package into memory (no verification).
+
+    A file that is not a readable package at all, or one carrying
+    duplicate entries (which would make its content ambiguous),
+    raises :class:`VerificationError` -- callers of this module
+    only ever handle that one refusal type."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            names = zf.namelist()
+            if len(names) != len(set(names)):
+                raise VerificationError(
+                    "package contains duplicate entries"
+                )
+            return {name: zf.read(name) for name in names}
+    except zipfile.BadZipFile as exc:
+        raise VerificationError(
+            "package is not a readable package file"
+        ) from exc
 
 
-def verify_package(path: str | Path, public_key_pem: bytes) -> dict[str, Any]:
-    """Verify signature + every file hash. Returns the manifest on success.
-
-    Raises :class:`VerificationError` on any failure: missing manifest or
-    signature, bad signature, a file hash mismatch, or an unlisted file.
-    """
-    public_key = load_public_key(public_key_pem)
-    entries = read_package(path)
+def _verify_entries(
+    entries: dict[str, bytes], public_key_pem: bytes
+) -> dict[str, Any]:
+    """Verify one in-memory read of a package: signature + hashes."""
+    try:
+        public_key = load_public_key(public_key_pem)
+    except (ValueError, TypeError) as exc:
+        raise VerificationError(
+            "the check key is not a valid public key"
+        ) from exc
     if MANIFEST_NAME not in entries or SIGNATURE_NAME not in entries:
         raise VerificationError("package is missing its manifest or signature")
     try:
         manifest = json.loads(entries[MANIFEST_NAME].decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
         raise VerificationError("package manifest is not valid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise VerificationError("package manifest is not a JSON object")
     try:
         signature = base64.b64decode(entries[SIGNATURE_NAME].decode("ascii"))
     except ValueError as exc:
@@ -129,6 +154,8 @@ def verify_package(path: str | Path, public_key_pem: bytes) -> dict[str, Any]:
     except InvalidSignature as exc:
         raise VerificationError("package signature does not match the manifest") from exc
     listed = manifest.get("files", {})
+    if not isinstance(listed, dict):
+        raise VerificationError("package manifest file list is not an object")
     payload_names = {
         name for name in entries if name not in (MANIFEST_NAME, SIGNATURE_NAME)
     }
@@ -140,10 +167,24 @@ def verify_package(path: str | Path, public_key_pem: bytes) -> dict[str, Any]:
     return manifest
 
 
+def verify_package(path: str | Path, public_key_pem: bytes) -> dict[str, Any]:
+    """Verify signature + every file hash. Returns the manifest on success.
+
+    Raises :class:`VerificationError` on any failure: an unreadable
+    package, a bad check key, missing manifest or signature, bad
+    signature, a file hash mismatch, or an unlisted file.
+    """
+    return _verify_entries(read_package(path), public_key_pem)
+
+
 def load_verified_package(path: str | Path, public_key_pem: bytes) -> dict[str, bytes]:
-    """Verify, then return the payload files. Refuses tampered packages."""
-    verify_package(path, public_key_pem)
+    """Verify, then return the payload files. Refuses tampered packages.
+
+    The package is read ONCE and the verified bytes are the bytes
+    returned -- there is no second read a swapped file could slip
+    through."""
     entries = read_package(path)
+    _verify_entries(entries, public_key_pem)
     return {
         name: data
         for name, data in entries.items()

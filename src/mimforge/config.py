@@ -23,6 +23,24 @@ class RuntimeProfile:
     prefer_gpu: bool = False  # GPU is optional, never required
     max_frames_in_memory: int = 64
 
+    def __post_init__(self) -> None:
+        # A bad profile value must fail here, at construction, not
+        # surface later as an unrelated failure mid-pipeline. (The
+        # segmentation/pose fields name models a later perception
+        # stage will load; in this build only the speech model and
+        # the keyframe stride are consumed -- see docs/SBOM.md.)
+        if self.keyframe_stride < 1:
+            raise ValueError(
+                f"keyframe_stride must be at least 1, got {self.keyframe_stride}"
+            )
+        if self.max_frames_in_memory < 1:
+            raise ValueError(
+                "max_frames_in_memory must be at least 1, got "
+                f"{self.max_frames_in_memory}"
+            )
+        if not self.speech_model.strip():
+            raise ValueError("speech_model must not be empty")
+
 
 #: Default profile for the target low-spec machines (hackathon build).
 LEAN_PROFILE = RuntimeProfile()

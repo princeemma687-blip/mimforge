@@ -457,6 +457,12 @@ class MainWindow(QMainWindow):
         self.author_panel.import_requested.connect(
             lambda: self.import_demonstration()
         )
+        self.author_panel.transcript_requested.connect(
+            lambda: self.import_transcript_file()
+        )
+        self.author_panel.draft_changed.connect(
+            self._persist_current_draft
+        )
         self.projects_panel = ProjectsPanel(self)
         self.design_panel = DesignPanel(self)
         self.simulate_panel = SimulatePanel(self)
@@ -493,7 +499,7 @@ class MainWindow(QMainWindow):
         # The Design panel shows the default machine until a project
         # is opened; the Projects panel lists the store as found.
         self.design_panel.show_design(
-            None, self.current_params(), self.bom_totals()
+            None, self.current_params(), self.bom_tables()
         )
 
     # -------------------------------------------------------------- motion
@@ -537,6 +543,39 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------- project store
 
+    def _draft_advisor(self):
+        """The drafting advisor for new drafts: the owner's
+        drafting Worker when its address is configured in the
+        environment (MIMFORGE_WORKER_URL), otherwise None --
+        structuring then uses its always-available offline
+        advisor, exactly as designed. The address is configuration
+        only; no key ever lives in the app."""
+        url = os.environ.get("MIMFORGE_WORKER_URL", "").strip()
+        if not url:
+            return None
+        from ..structuring import WorkerAdvisor
+
+        return WorkerAdvisor(url)
+
+    def parts_db(self):
+        """The parts database the BOM is priced from: the editable
+        ``parts.json`` beside the projects, when one is present and
+        readable, otherwise the built-in estimates. Loaded once per
+        window; a broken file falls back to the defaults rather
+        than breaking the Design panel."""
+        if getattr(self, "_parts_db", None) is None:
+            from ..bom import PartsDB
+
+            db = PartsDB()
+            candidate = self.projects_dir / "parts.json"
+            if candidate.is_file():
+                try:
+                    db = PartsDB.load(candidate)
+                except (OSError, ValueError, KeyError, TypeError):
+                    db = PartsDB()
+            self._parts_db = db
+        return self._parts_db
+
     def available_templates(self) -> list[dict]:
         from ..templates import list_templates
 
@@ -570,8 +609,15 @@ class MainWindow(QMainWindow):
         from ..templates import load_template_data, template_from_data
 
         self._persist_current_draft()
-        data = load_template_data(template_name)
-        template = template_from_data(data)
+        try:
+            data = load_template_data(template_name)
+            template = template_from_data(data)
+        except (OSError, ValueError, KeyError, TypeError):
+            self.projects_panel.status_label.setText(
+                "STATUS: THAT TEMPLATE COULD NOT BE READ — "
+                "THE PROJECT WAS NOT CREATED"
+            )
+            return None
         base = _slugify(title)
         project_id, n = base, 2
         while (self.projects_dir / project_id).exists():
@@ -587,7 +633,9 @@ class MainWindow(QMainWindow):
                 "data": data,
             },
         )
-        draft = build_draft(template, Transcript())
+        draft = build_draft(
+            template, Transcript(), advisor=self._draft_advisor()
+        )
         project.put_record("draft", "current", draft.to_dict())
         project.save()
         self._set_current(project, template, data, template_name)
@@ -634,7 +682,9 @@ class MainWindow(QMainWindow):
         if draft_record is not None:
             draft = AuthoringDraft.from_dict(draft_record)
         else:
-            draft = build_draft(template, Transcript())
+            draft = build_draft(
+            template, Transcript(), advisor=self._draft_advisor()
+        )
         self._set_current(project, template, data, record.get("name", ""))
         self.author_panel.load_draft(draft)
         self.projects_panel.show_current(project.title)
@@ -649,7 +699,7 @@ class MainWindow(QMainWindow):
         self.current_template_name = template_name
         self.last_verification = None
         self.design_panel.show_design(
-            project.title, self.current_params(), self.bom_totals()
+            project.title, self.current_params(), self.bom_tables()
         )
         self.simulate_panel.show_project(project.title)
         self.deliver_panel.show_project(
@@ -659,12 +709,23 @@ class MainWindow(QMainWindow):
             self.push_sync_metadata()
 
     def _persist_current_draft(self) -> None:
+        from ..projects import ProjectError
+
         if self.current_project is None:
             return
         draft = self.author_panel.current_draft()
         if draft is not None:
-            self.current_project.put_record("draft", "current", draft.to_dict())
-            self.current_project.save()
+            self.current_project.put_record(
+                "draft", "current", draft.to_dict()
+            )
+            try:
+                self.current_project.save()
+            except ProjectError:
+                # Persisting the outgoing draft is best-effort: a
+                # damaged store must not crash this call -- the
+                # open/create that follows reports the damage in
+                # plain words on its own path.
+                pass
 
     # ------------------------------------------------------------ design
 
@@ -682,15 +743,22 @@ class MainWindow(QMainWindow):
                     pass
         return GantryParameters()
 
-    def bom_totals(self) -> list[tuple[str, float]]:
-        from ..bom import TIERS, PartsDB, generate_bom
+    def bom_tables(self):
+        """Every tier's full itemised BOM for the current machine:
+        (tier, Bom) pairs in tier order. The Design panel renders
+        the lines; the totals are each Bom's own total."""
+        from ..bom import TIERS, generate_bom
         from ..design import build_gantry
 
         part_ids = build_gantry(self.current_params()).part_ids
-        db = PartsDB()
+        db = self.parts_db()
         return [
-            (tier, generate_bom(db, tier, part_ids).total_ngn)
-            for tier in TIERS
+            (tier, generate_bom(db, tier, part_ids)) for tier in TIERS
+        ]
+
+    def bom_totals(self) -> list[tuple[str, float]]:
+        return [
+            (tier, bom.total_ngn) for tier, bom in self.bom_tables()
         ]
 
     # -------------------------------------------------------- verification
@@ -705,12 +773,24 @@ class MainWindow(QMainWindow):
                 "NO PROJECT OPEN — CREATE OR OPEN A PROJECT FIRST"
             )
             return None
+        # When the project holds a recorded demonstration, the
+        # shape checks run against it (machine versus human);
+        # otherwise verification says plainly that it checked the
+        # simulation against itself.
+        teacher_track = None
+        if self.current_project is not None:
+            demo = self.current_project.get_record(
+                "demonstration", "current"
+            )
+            if demo:
+                teacher_track = demo.get("track")
         try:
             outcome = _run(
                 self.current_template,
                 self.current_template_data,
                 params=self.current_params(),
                 length_scale=self.current_length_scale(),
+                teacher_track=teacher_track,
             )
         except Exception as exc:  # plain-words failure, never a crash
             self.simulate_panel.show_message(
@@ -832,10 +912,21 @@ class MainWindow(QMainWindow):
     def export_cad(self, kind: str, path=None):
         """Write the current design as a CAD file (STEP or STL) for
         manufacture. With no path, a save dialog asks; cancelling is
-        a plain status, never a dead end."""
+        a plain status, never a dead end.
+
+        The risk gate covers design exports too (risk.py: "a design
+        may not be exported until a teacher has signed"): without a
+        valid sign-off for this design, nothing is written."""
         from ..design import build_gantry
         from ..design import export_cad as _export_cad
 
+        assessment = self.current_assessment()
+        if assessment is None or not assessment.signed:
+            self.design_panel.set_status(
+                "EXPORT BLOCKED — SIGN THE RISK ASSESSMENT IN "
+                "DELIVER FIRST"
+            )
+            return None
         suffix = ".step" if kind == "step" else ".stl"
         if path is None:
             chosen, _selected = QFileDialog.getSaveFileName(
@@ -918,14 +1009,22 @@ class MainWindow(QMainWindow):
 
     def current_assessment(self):
         """The current project's risk assessment: the stored one
-        when its hazards still match the template's (a sign-off only
-        ever covers the hazards it was given), otherwise a fresh,
-        unsigned assessment built from the template data."""
-        from ..delivery import assessment_from_dict, build_assessment
+        when its hazards still match the template's AND it was made
+        for this design (a sign-off only ever covers the hazards
+        and the design it was given), otherwise a fresh, unsigned
+        assessment built from the template data."""
+        from ..delivery import (
+            assessment_from_dict,
+            build_assessment,
+            fingerprint_design,
+        )
 
         if self.current_project is None or self.current_template_data is None:
             return None
         fresh = build_assessment(self.current_template_data)
+        fresh.design_fingerprint = fingerprint_design(
+            self.current_params()
+        )
         record = self.current_project.get_record("risk", "current")
         if record is not None:
             try:
@@ -940,7 +1039,11 @@ class MainWindow(QMainWindow):
                 (h.id, h.description, h.severity, h.likelihood, h.mitigation)
                 for h in stored.hazards
             }
-            if stored_hazards == fresh_hazards:
+            if (
+                stored_hazards == fresh_hazards
+                and stored.design_fingerprint
+                == fresh.design_fingerprint
+            ):
                 return stored
         return fresh
 
@@ -963,6 +1066,20 @@ class MainWindow(QMainWindow):
         risk.sign(assessment, name)
         self.current_project.put_record(
             "risk", "current", assessment_to_dict(assessment)
+        )
+        # The core-schema SafetyCase view of the signed assessment
+        # is stored alongside it, as the schema intends.
+        case = risk.to_safety_case(assessment)
+        self.current_project.put_record(
+            "safety_case",
+            "current",
+            {
+                "practical_id": assessment.practical_id,
+                "platform_id": assessment.platform_id,
+                "summary": case.risk_assessment,
+                "interlocks": list(case.interlocks),
+                "signed_by_teacher": case.signed_by_teacher,
+            },
         )
         self.current_project.save()
         panel.show_assessment(assessment)
@@ -1055,6 +1172,7 @@ class MainWindow(QMainWindow):
             assessment=assessment,
             params=self.current_params(),
             code=bundle,
+            parts_db=self.parts_db(),
         )
         _private_pem, public_pem = delivery.load_or_create_keypair(
             self.projects_dir / ".keys"
@@ -1143,6 +1261,7 @@ class MainWindow(QMainWindow):
         # Tracking: the template names the object by colour (data);
         # a template without one is read and transcribed only.
         coverage = None
+        track = None
         tracking_note = "TRACKING: NO COLOUR IS SET FOR THIS PRACTICAL"
         prompt_data = (self.current_template_data or {}).get("tracking")
         if prompt_data:
@@ -1162,13 +1281,14 @@ class MainWindow(QMainWindow):
                 if coverage > 0:
                     tracking_note = (
                         "TRACKING: THE OBJECT WAS FOUND IN "
-                        f"{coverage:.0%} OF THE VIDEO"
+                        f"{coverage:.0%} OF THE FRAMES CHECKED"
                     )
                 else:
                     tracking_note = (
                         "TRACKING: THE OBJECT WAS NOT FOUND IN THE VIDEO"
                     )
             except Exception:  # tracking reports, it never blocks
+                track = None
                 tracking_note = "TRACKING: COULD NOT RUN ON THIS VIDEO"
 
         engine = transcriber or self.transcriber or WhisperTranscriber(
@@ -1191,12 +1311,87 @@ class MainWindow(QMainWindow):
             )
             return None
         draft = build_draft(
-            self.current_template, transcript, track_coverage=coverage
+            self.current_template,
+            transcript,
+            advisor=self._draft_advisor(),
+            track_coverage=coverage,
         )
         self.author_panel.load_draft(draft)
+        # The demonstration itself is SAVED with the project (the
+        # platform spec's first item): the recording is copied into
+        # the project's sealed media store and a Demonstration
+        # record keeps the probe facts, the tracked motion, any
+        # periodic measurement the track supports, and the words.
+        periodic = None
+        if track is not None:
+            try:
+                from ..perception import analyse_periodic
+
+                found = analyse_periodic(track)
+                periodic = {
+                    "mean_period_s": round(found.mean_period_s, 3),
+                    "period_first_half_s": round(
+                        found.period_first_half_s, 3
+                    ),
+                    "period_second_half_s": round(
+                        found.period_second_half_s, 3
+                    ),
+                    "crossings": found.n_crossings,
+                }
+            except ValueError:
+                periodic = None
+        saved_note = ""
         if self.current_project is not None:
             self.current_project.put_record(
                 "draft", "current", draft.to_dict()
+            )
+            stored_media = None
+            digest = None
+            try:
+                rel = f"demonstration{path.suffix.lower()}"
+                digest = self.current_project.add_media_file(rel, path)
+                stored_media = f"media/{rel}"
+            except OSError:
+                saved_note = (
+                    " · THE RECORDING COULD NOT BE SAVED INTO "
+                    "THE PROJECT"
+                )
+            if stored_media is not None:
+                saved_note = " · THE RECORDING IS SAVED IN THE PROJECT"
+            from ..perception import serialise_track
+
+            self.current_project.put_record(
+                "demonstration",
+                "current",
+                {
+                    "source_name": path.name,
+                    "stored_media": stored_media,
+                    "sha256": digest,
+                    "duration_s": info.duration_s,
+                    "width": info.width,
+                    "height": info.height,
+                    "fps": info.fps,
+                    "has_audio": info.has_audio,
+                    "track": (
+                        serialise_track(track)
+                        if track is not None
+                        else None
+                    ),
+                    "periodic": periodic,
+                    "transcript": {
+                        "engine": transcript.engine,
+                        "model": transcript.model,
+                        "language": transcript.language,
+                        "segments": [
+                            {
+                                "start_s": s.start_s,
+                                "end_s": s.end_s,
+                                "text": s.text,
+                            }
+                            for s in transcript.segments
+                        ],
+                    },
+                },
             )
             self.current_project.save()
         self.last_import_report = {
@@ -1206,10 +1401,64 @@ class MainWindow(QMainWindow):
             "coverage": coverage,
             "transcript_engine": transcript.engine,
             "steps": len(draft.steps),
+            "periodic": periodic,
         }
         panel.show_import_status(
             f"DEMONSTRATION IMPORTED — {len(draft.steps)} STEPS "
-            f"DRAFTED FROM THE RECORDING · {tracking_note}"
+            f"DRAFTED FROM THE RECORDING · {tracking_note}{saved_note}"
+        )
+        return draft
+
+    def import_transcript_file(self, path=None):
+        """Draft the steps from a teacher-supplied transcript file
+        (SRT) instead of a recording -- the fallback narration.py
+        promises for when a video's speech cannot be read on this
+        computer. Same draft path as a video import; no tracking
+        (there is no video), and an unreadable file changes
+        nothing."""
+        from ..narration import TranscriptionError, parse_srt
+        from ..structuring import build_draft
+
+        panel = self.author_panel
+        if self.current_template is None:
+            panel.show_import_status(
+                "OPEN A PROJECT FIRST, THEN USE A TRANSCRIPT FILE"
+            )
+            return None
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Choose the transcript file",
+                "",
+                "SubRip subtitles (*.srt);;All files (*)",
+            )
+            if not path:
+                return None
+        path = Path(path)
+        try:
+            transcript = parse_srt(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        except (OSError, TranscriptionError):
+            panel.show_import_status(
+                "THAT FILE IS NOT A READABLE TRANSCRIPT — "
+                "THE DRAFT WAS NOT CHANGED"
+            )
+            return None
+        draft = build_draft(
+            self.current_template,
+            transcript,
+            advisor=self._draft_advisor(),
+        )
+        self.author_panel.load_draft(draft)
+        if self.current_project is not None:
+            self.current_project.put_record(
+                "draft", "current", draft.to_dict()
+            )
+            self.current_project.save()
+        panel.show_import_status(
+            f"TRANSCRIPT IMPORTED — {len(draft.steps)} STEPS "
+            "DRAFTED FROM THE FILE"
         )
         return draft
 
@@ -1291,6 +1540,10 @@ class MainWindow(QMainWindow):
             detail = result.detail.removeprefix("backend error: ")
             panel.show_sync(
                 True, f"SYNC: ON — LAST SEND FAILED — {detail.upper()}"
+            )
+        elif result.status == "skipped":
+            panel.show_sync(
+                True, "SYNC: ON — NOTHING SENT (SYNC IS OFF IN THE ENGINE)"
             )
         return result
 

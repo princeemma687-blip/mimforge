@@ -175,3 +175,32 @@ def test_verification_run_records_the_assessment(template):
     assert run.discrepancy_metrics["teacher_ellipticity"] == pytest.approx(
         0.035, abs=0.01
     )
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_period_outlier_with_zero_median_is_flagged():
+    """Every row fitting exactly except one is the clearest
+    miscount case; a zero median must not silence the check."""
+    found = check_period_outliers([0.0, 0.0, 100.0])
+    assert found is not None
+    assert found.check_id == CHECK_MISCOUNT
+
+
+def test_assess_with_a_tiny_track_records_planarity_not_run(template):
+    """Too few track points: planarity is recorded as NOT checked,
+    never as passed -- missing data is not a clean swing."""
+    import numpy as np
+
+    report = assess(
+        teacher_points_xy=np.array([[0.0, 0.0], [1.0, 1.0]]),
+        sim_points_xy=np.array(
+            [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]
+        ),
+        teacher_value=9.8,
+        sim_value=9.8,
+        band_percent=5.0,
+    )
+    assert report.metrics["planarity_checked"] == 0.0
+    assert CHECK_CONICAL not in report.check_ids

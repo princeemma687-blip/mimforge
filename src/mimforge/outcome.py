@@ -68,13 +68,28 @@ def linear_fit(xs: list[float], ys: list[float]) -> LinearFit:
     y = np.array(ys, dtype=float)
     slope, intercept = np.polyfit(x, y, 1)
     fitted = slope * x + intercept
-    residuals = 100.0 * (y - fitted) / np.where(fitted == 0, np.nan, fitted)
-    residuals = [float(r) for r in residuals]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw = 100.0 * (y - fitted) / fitted
+    # A point whose fitted value is (near) zero has no meaningful
+    # percentage: an exact hit there is a 0% residual, a miss is an
+    # unbounded one. "Near" is scale-aware -- a perfect fit's
+    # intercept is a rounding epsilon, not a real zero crossing,
+    # and dividing by it would invent a huge spurious residual.
+    # (The old code made these NaN and dropped them from the
+    # maximum, so a degenerate fit silently "passed".)
+    scale = max(1.0, float(np.max(np.abs(y))) if y.size else 1.0)
+    eps = 1e-9 * scale
+    residuals_arr = np.where(
+        np.abs(fitted) <= eps,
+        np.where(np.abs(y) <= eps, 0.0, np.inf),
+        raw,
+    )
+    residuals = [float(r) for r in residuals_arr]
     return LinearFit(
         slope=float(slope),
         intercept=float(intercept),
         residuals_percent=residuals,
-        max_abs_residual_percent=float(np.nanmax(np.abs(residuals))),
+        max_abs_residual_percent=float(np.max(np.abs(residuals_arr))),
     )
 
 
@@ -95,19 +110,36 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
     if isinstance(node, ast.BinOp):
         left = _eval_node(node.left, variables)
         right = _eval_node(node.right, variables)
-        if isinstance(node.op, ast.Add):
-            return left + right
-        if isinstance(node.op, ast.Sub):
-            return left - right
-        if isinstance(node.op, ast.Mult):
-            return left * right
-        if isinstance(node.op, ast.Div):
-            return left / right
-        if isinstance(node.op, ast.Pow):
-            return left**right
-        if isinstance(node.op, ast.Mod):
-            return left % right
-        raise FormulaError(f"operator {type(node.op).__name__} not allowed")
+        try:
+            if isinstance(node.op, ast.Add):
+                result = left + right
+            elif isinstance(node.op, ast.Sub):
+                result = left - right
+            elif isinstance(node.op, ast.Mult):
+                result = left * right
+            elif isinstance(node.op, ast.Div):
+                result = left / right
+            elif isinstance(node.op, ast.Pow):
+                result = left**right
+            elif isinstance(node.op, ast.Mod):
+                result = left % right
+            else:
+                raise FormulaError(
+                    f"operator {type(node.op).__name__} not allowed"
+                )
+        except FormulaError:
+            raise
+        except (ArithmeticError, ValueError) as exc:
+            # Division by zero, overflow, a math-domain failure:
+            # a diagnosable formula error, never a raw traceback.
+            raise FormulaError(
+                f"formula arithmetic failed: {exc}"
+            ) from exc
+        if isinstance(result, complex):
+            raise FormulaError(
+                "formula produced a complex result, not a number"
+            )
+        return float(result)
     if isinstance(node, ast.UnaryOp):
         value = _eval_node(node.operand, variables)
         if isinstance(node.op, ast.USub):
@@ -124,7 +156,12 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
         args = [_eval_node(a, variables) for a in node.args]
         if node.keywords:
             raise FormulaError("keyword arguments are not allowed")
-        return float(fn(*args))
+        try:
+            return float(fn(*args))
+        except (ArithmeticError, ValueError) as exc:
+            raise FormulaError(
+                f"function {node.func.id!r} failed: {exc}"
+            ) from exc
     raise FormulaError(f"AST node {type(node).__name__} not allowed in a formula")
 
 

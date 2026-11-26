@@ -104,3 +104,70 @@ def test_draft_json_round_trip():
 
 def test_offline_advisor_returns_none():
     assert OfflineAdvisor().draft("x", "y", {}) is None
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[1, 2, 3]", b'"just a string"', b'{"text": 123}', b"not json"],
+)
+def test_worker_advisor_bad_bodies_degrade_to_none(monkeypatch, body):
+    """A misbehaving Worker -- non-object JSON, a non-string text,
+    invalid JSON -- degrades to the offline draft (None), it never
+    raises out of draft()."""
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResponse(body),
+    )
+    advisor = WorkerAdvisor("http://worker.invalid")
+    assert advisor.draft("s1", "Title", {}) is None
+
+
+def test_advisor_receives_the_teachers_spoken_words():
+    """The advisor context carries what the teacher actually said
+    for the step (not only timing brackets), so an online advisor
+    can improve real wording."""
+    captured = {}
+
+    class _Capture:
+        name = "capture"
+
+        def draft(self, step_id, title, context):
+            captured[step_id] = context
+            return None
+
+    transcript = Transcript(
+        segments=[
+            TranscriptSegment(
+                0.0,
+                4.0,
+                "Set up the stand, clamp the thread and measure "
+                "the length from the pivot to the centre.",
+            )
+        ],
+        engine="test",
+    )
+    template = load_template()
+    build_draft(template, transcript, advisor=_Capture())
+    first_step = template.steps[0].id
+    assert "clamp the thread" in captured[first_step]["spoken"]
+    assert captured[first_step]["spoken_spans"].startswith("[0.0-4.0s]")

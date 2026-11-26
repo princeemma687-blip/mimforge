@@ -65,3 +65,39 @@ def test_safety_case_reflects_signoff():
     assert case.signed_by_teacher
     assert "Mrs A. Teacher" in case.risk_assessment
     assert "monitored stop" in case.interlocks[0]
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_signoff_is_bound_to_the_design_fingerprint():
+    """The seal covers the design: changing the design fingerprint
+    after sign-off breaks verification exactly like editing a
+    hazard does."""
+    assessment = generate_risk_assessment("p1", "bench_gantry")
+    assessment.design_fingerprint = "design-a"
+    sign(assessment, "Mrs Teacher")
+    assert assessment.signed
+    assessment.design_fingerprint = "design-b"
+    assert not assessment.signed
+
+
+def test_template_severity_comes_from_the_template():
+    """A template whose hazard profile declares a severity gets
+    it; an undeclared/invalid one falls back to low."""
+    high = generate_risk_assessment(
+        "p1",
+        "bench_gantry",
+        template_hazards=["hot surface"],
+        template_severity="high",
+    )
+    template_rows = [h for h in high.hazards if h.source != "platform"]
+    assert template_rows[0].severity == "high"
+    bogus = generate_risk_assessment(
+        "p1",
+        "bench_gantry",
+        template_hazards=["hot surface"],
+        template_severity="extreme",
+    )
+    rows = [h for h in bogus.hazards if h.source != "platform"]
+    assert rows[0].severity == "low"

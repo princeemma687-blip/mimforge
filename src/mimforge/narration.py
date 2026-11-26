@@ -64,25 +64,30 @@ def extract_audio(
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise EngineUnavailable("ffmpeg not found on PATH")
-    proc = subprocess.run(
-        [
-            ffmpeg,
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            str(video_path),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            str(sample_rate),
-            str(out_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(video_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate),
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise TranscriptionError(
+            f"extracting audio from {video_path} timed out"
+        ) from None
     if proc.returncode != 0 or not out_path.is_file() or out_path.stat().st_size == 0:
         raise TranscriptionError(
             f"no usable audio in {video_path} "
@@ -125,12 +130,23 @@ class WhisperTranscriber:
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise TranscriptionError(f"audio file not found: {audio_path}")
-        model = WhisperModel(
-            self.model, device=self.device, compute_type=self.compute_type
-        )
+        try:
+            model = WhisperModel(
+                self.model,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
+        except Exception as exc:
+            # First run downloads the model; no network, a blocked
+            # download or a runtime failure must surface as the
+            # documented "engine unavailable", never as a raw crash.
+            raise EngineUnavailable(
+                f"the speech model {self.model!r} could not be loaded "
+                f"({exc}); use a manual/SRT transcript instead"
+            ) from None
         try:
             segments, info = model.transcribe(str(audio_path), beam_size=5)
-            return Transcript(
+            transcript = Transcript(
                 segments=[
                     TranscriptSegment(
                         start_s=float(s.start),
@@ -143,8 +159,19 @@ class WhisperTranscriber:
                 engine="faster-whisper",
                 model=self.model,
             )
+        except Exception as exc:
+            raise TranscriptionError(
+                f"transcription failed ({exc})"
+            ) from None
         finally:
             del model  # release the model immediately (lean mode)
+        if not transcript.segments or not transcript.full_text:
+            # The documented contract: no usable output is an error,
+            # so callers fall back instead of drafting from nothing.
+            raise TranscriptionError(
+                "transcription produced no usable speech"
+            )
+        return transcript
 
 
 # ------------------------------------------------- teacher-supplied input

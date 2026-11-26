@@ -10,9 +10,9 @@
 #    1. Checks for Python 3.11+ (install from python.org first if missing -
 #       tick "Add python.exe to PATH" in the installer).
 #    2. Creates a virtual environment in .\.venv
-#    3. Installs the Phase 0 Python toolchain (plan section 3 / docs/SBOM.md):
-#       PySide6, MuJoCo, build123d, faster-whisper, MediaPipe, ONNX Runtime,
-#       pytest.
+#    3. Installs the app's declared dependencies (pyproject.toml, via
+#       pip install -e .) plus pytest -- exactly the set the code
+#       imports, nothing hand-picked, nothing extra.
 #    4. Prints versions so they can be pinned in docs/SBOM.md (Phase 0.4
 #       licence audit).
 #
@@ -22,8 +22,9 @@
 #      A GPL build must never be bundled (see docs/SBOM.md).
 #    - QNX SDP 8.0: install separately via QNX Everywhere (free
 #      non-commercial licence) - a later phase, not Phase 0 Python setup.
-#    - Model weights (SAM 2.1 tiny, Whisper base, MediaPipe Lite) are
-#      downloaded and hash-pinned in a later phase, not here.
+#    - Model weights: the Whisper base model downloads on first
+#      transcription (~150 MB). SAM 2.1 and MediaPipe are NOT part
+#      of this build (see docs/SBOM.md status section).
 #
 #  Run from the repository root in PowerShell:
 #    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -58,22 +59,16 @@ if (-not (Test-Path ".venv")) {
 Write-Host "Upgrading pip ..."
 python -m pip install --upgrade pip
 
-Write-Host "Installing Phase 0 toolchain (this can take a while on 4 GB RAM machines) ..."
-# Core schema + tests need nothing third-party; the packages below are the
-# Phase 0-audited engine dependencies from docs/SBOM.md.
-python -m pip install `
-    PySide6 `
-    mujoco `
-    build123d `
-    faster-whisper `
-    mediapipe `
-    onnxruntime `
-    pytest
+Write-Host "Installing the app + test runner (this can take a while on 4 GB RAM machines) ..."
+# The declared dependency set lives in pyproject.toml only -- this
+# script installs the project itself so the two can never drift.
+python -m pip install -e .
+python -m pip install pytest
 
 # --- 4. Version report (pin these in docs/SBOM.md) ---------------------------
 Write-Host ""
 Write-Host "== Installed versions =="
-python -m pip list --format=columns | Select-String -Pattern "PySide6|mujoco|build123d|faster-whisper|mediapipe|onnxruntime|pytest"
+python -m pip list --format=columns | Select-String -Pattern "PySide6|mujoco|build123d|faster-whisper|cryptography|opencv|av|numpy|pytest"
 
 Write-Host ""
 Write-Host "== Running the Phase 0 test suite =="

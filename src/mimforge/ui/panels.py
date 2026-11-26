@@ -16,18 +16,29 @@ import math
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .main_window import ACCENT, MUTED, PANEL_BORDER, TEXT, mono_font
+from .main_window import (
+    ACCENT,
+    MUTED,
+    PANEL_BG,
+    PANEL_BORDER,
+    TEXT,
+    mono_font,
+)
 from .motion import motion_enabled
 
 
@@ -278,13 +289,21 @@ class GantryElevationView(QWidget):
         painter.restore()
 
 
+def _money(value: float) -> str:
+    return f"₦{value:,.0f}"
+
+
 class DesignPanel(QWidget):
     """The current machine design + bill of materials, with the
-    CAD files (STEP / STL) exportable for manufacture."""
+    CAD files (STEP / STL) exportable for manufacture. The
+    materials table lists every line of the selected tier's BOM --
+    the platform spec's "tell the user the necessary materials",
+    in full, not just the tier totals."""
 
     def __init__(self, host=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.host = host
+        self._tier_boms: dict = {}
         layout = QVBoxLayout(self)
         layout.addWidget(_plate("DESIGN — MACHINE + BOM"))
         self.project_label = _status("PROJECT: —")
@@ -295,6 +314,46 @@ class DesignPanel(QWidget):
         self.readout.setFont(mono_font(10))
         self.readout.setReadOnly(True)
         layout.addWidget(self.readout, stretch=1)
+        layout.addWidget(
+            _caption("MATERIALS — EVERYTHING THE MACHINE IS BUILT FROM")
+        )
+        self.tier_combo = QComboBox()
+        self.tier_combo.setFont(mono_font(10))
+        self.tier_combo.currentIndexChanged.connect(
+            lambda _index: self._render_materials()
+        )
+        layout.addWidget(self.tier_combo)
+        self.materials_table = QTableWidget(0, 4)
+        self.materials_table.setHorizontalHeaderLabels(
+            ["MATERIAL", "QTY", "UNIT PRICE", "LINE TOTAL"]
+        )
+        self.materials_table.setFont(mono_font(10))
+        self.materials_table.horizontalHeader().setFont(
+            mono_font(9, bold=True)
+        )
+        self.materials_table.verticalHeader().setVisible(False)
+        self.materials_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.materials_table.setSelectionMode(
+            QAbstractItemView.NoSelection
+        )
+        self.materials_table.setFocusPolicy(Qt.NoFocus)
+        header = self.materials_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in (1, 2, 3):
+            header.setSectionResizeMode(
+                column, QHeaderView.ResizeToContents
+            )
+        self.materials_table.setStyleSheet(
+            f"QTableWidget {{ background: {PANEL_BG}; color: {TEXT}; "
+            f"gridline-color: {PANEL_BORDER}; "
+            f"border: 1px solid {PANEL_BORDER}; }}"
+            f"QHeaderView::section {{ background: {PANEL_BG}; "
+            f"color: {MUTED}; border: none; "
+            f"border-bottom: 1px solid {PANEL_BORDER}; padding: 4px; }}"
+        )
+        layout.addWidget(self.materials_table, stretch=1)
         export_row = QHBoxLayout()
         self.export_step_button = QPushButton("⬆  EXPORT STEP")
         self.export_step_button.setFont(mono_font(10, bold=True))
@@ -319,7 +378,11 @@ class DesignPanel(QWidget):
     def set_status(self, text: str) -> None:
         self.status_label.setText(f"STATUS: {text}")
 
-    def show_design(self, project_title: str | None, params, tier_totals) -> None:
+    def show_design(self, project_title: str | None, params, tier_boms) -> None:
+        """Show one machine: its parameters, the tier totals, and
+        the full itemised materials of the selected tier.
+        ``tier_boms`` is a list of (tier, Bom) pairs in tier
+        order, exactly as the host's BOM tables provide them."""
         self.project_label.setText(
             f"PROJECT: {project_title or '—'}"
         )
@@ -342,10 +405,60 @@ class DesignPanel(QWidget):
             "",
             "BILL OF MATERIALS — ESTIMATED TOTALS",
         ]
-        for tier, total in tier_totals:
-            lines.append(f"{tier.upper():<18} ₦{total:,.0f}")
-        lines += ["", "Totals follow the parts list; prices are estimates."]
+        for tier, bom in tier_boms:
+            lines.append(f"{tier.upper():<18} {_money(bom.total_ngn)}")
+        lines += [
+            "",
+            "Every material is itemised in the table below; "
+            "prices are estimates.",
+        ]
         self.readout.setPlainText("\n".join(lines))
+        self._tier_boms = dict(tier_boms)
+        current = self.tier_combo.currentData()
+        self.tier_combo.blockSignals(True)
+        self.tier_combo.clear()
+        for tier, _bom in tier_boms:
+            self.tier_combo.addItem(tier.upper(), tier)
+        self.tier_combo.blockSignals(False)
+        if current is not None:
+            index = self.tier_combo.findData(current)
+            if index >= 0:
+                self.tier_combo.setCurrentIndex(index)
+        self._render_materials()
+
+    def _render_materials(self) -> None:
+        """Fill the materials table with the selected tier's BOM
+        lines, footed by that tier's total."""
+        tier = self.tier_combo.currentData()
+        bom = self._tier_boms.get(tier) if tier else None
+        table = self.materials_table
+        table.setRowCount(0)
+        if bom is None:
+            return
+        right = Qt.AlignRight | Qt.AlignVCenter
+        for line in bom.lines:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(line.name))
+            qty = QTableWidgetItem(str(line.quantity))
+            qty.setTextAlignment(right)
+            table.setItem(row, 1, qty)
+            unit = QTableWidgetItem(_money(line.unit_price_ngn))
+            unit.setTextAlignment(right)
+            table.setItem(row, 2, unit)
+            total = QTableWidgetItem(_money(line.line_total_ngn))
+            total.setTextAlignment(right)
+            table.setItem(row, 3, total)
+        foot = table.rowCount()
+        table.insertRow(foot)
+        label = QTableWidgetItem(f"TIER TOTAL — {bom.tier.upper()}")
+        label.setFont(mono_font(10, bold=True))
+        table.setItem(foot, 0, label)
+        table.setSpan(foot, 0, 1, 3)
+        total = QTableWidgetItem(_money(bom.total_ngn))
+        total.setFont(mono_font(10, bold=True))
+        total.setTextAlignment(right)
+        table.setItem(foot, 3, total)
 
 
 class FitGraphView(QWidget):
@@ -526,8 +639,18 @@ class SimulatePanel(QWidget):
             "VERDICT ...... "
             + ("WITHIN TOLERANCE" if outcome.passed else "OUTSIDE TOLERANCE"),
             "",
+            "SHAPE CHECKS . "
+            + (
+                "AGAINST YOUR RECORDED DEMONSTRATION"
+                if getattr(outcome, "track_basis", "simulation")
+                == "demonstration"
+                else "SIMULATION ONLY — IMPORT A DEMONSTRATION TO "
+                "CHECK AGAINST YOUR RECORDING"
+            ),
             "CHECKS",
         ]
+        if getattr(outcome, "engine", "") == "rk4-ode-fallback":
+            lines.append("ENGINE ....... RK4 FALLBACK (MUJOCO UNAVAILABLE)")
         findings = outcome.report.findings if outcome.report else []
         if not findings:
             lines.append("  none — all clear")

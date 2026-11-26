@@ -135,6 +135,8 @@ def test_deliver_sign_then_export_produces_a_verifiable_package(
         "project.json",
         "template.json",
         "risk_assessment.json",
+        "design.json",
+        "bom.json",
         "controller.py",
         "control_panel.py",
         "draft.json",
@@ -211,7 +213,21 @@ def test_design_exports_step_and_stl(app, tmp_path, monkeypatch):
     _goto(window, "Design")
     panel = window.design_panel
 
+    # The risk gate covers design exports: before sign-off the
+    # export is blocked in plain words and nothing is written.
     step_path = tmp_path / "machine.step"
+    _save_dialog(monkeypatch, step_path)
+    panel.export_step_button.click()
+    assert "EXPORT BLOCKED" in panel.status_label.text()
+    assert not step_path.exists()
+
+    # Sign in Deliver, then the same clicks write real files.
+    _goto(window, "Deliver")
+    window.deliver_panel.teacher_edit.setText("Mrs A. Teacher")
+    window.deliver_panel.sign_button.click()
+    assert "SIGNED BY" in window.deliver_panel.signoff_label.text()
+    _goto(window, "Design")
+
     _save_dialog(monkeypatch, step_path)
     panel.export_step_button.click()
     assert "SAVED" in panel.status_label.text()
@@ -225,6 +241,51 @@ def test_design_exports_step_and_stl(app, tmp_path, monkeypatch):
     panel.export_stl_button.click()
     assert "SAVED" in panel.status_label.text()
     assert stl_path.is_file() and stl_path.stat().st_size > 0
+
+
+def test_design_materials_table_lists_every_line_per_tier(
+    app, tmp_path
+):
+    """The materials promise: the Design panel shows every itemised
+    line of the selected tier's BOM -- names, quantities, unit
+    prices and correct line totals -- footed by the tier total,
+    for each of the three tiers."""
+    from mimforge.bom import TIERS, PartsDB, generate_bom
+    from mimforge.design import build_gantry
+
+    window = _window(tmp_path)
+    _create_via_clicks(window)
+    _goto(window, "Design")
+    panel = window.design_panel
+    part_ids = build_gantry(window.current_params()).part_ids
+    db = PartsDB()
+    for index, tier in enumerate(TIERS):
+        panel.tier_combo.setCurrentIndex(index)
+        assert panel.tier_combo.currentData() == tier
+        bom = generate_bom(db, tier, part_ids)
+        table = panel.materials_table
+        # One row per BOM line, plus the tier-total footer row.
+        assert table.rowCount() == len(bom.lines) + 1
+        for row, line in enumerate(bom.lines):
+            assert table.item(row, 0).text() == line.name
+            assert table.item(row, 1).text() == str(line.quantity)
+            assert table.item(row, 2).text() == (
+                f"₦{line.unit_price_ngn:,.0f}"
+            )
+            assert table.item(row, 3).text() == (
+                f"₦{line.line_total_ngn:,.0f}"
+            )
+        foot = table.rowCount() - 1
+        assert tier.upper() in table.item(foot, 0).text()
+        assert table.item(foot, 3).text() == f"₦{bom.total_ngn:,.0f}"
+    # Spot-check real parts-DB lines by name in the prototype tier.
+    panel.tier_combo.setCurrentIndex(0)
+    names = [
+        panel.materials_table.item(r, 0).text()
+        for r in range(panel.materials_table.rowCount() - 1)
+    ]
+    assert "Fasteners kit (bolts, nuts, brackets)" in names
+    assert "Upright pair, MDF/plywood cut" in names
 
 
 # ----------------------------------------------------------------- import
@@ -425,3 +486,149 @@ def test_sync_failure_is_a_plain_status_not_a_crash(
     panel.sync_button.click()
     assert window.sync_on
     assert "LAST SEND FAILED" in panel.sync_status_label.text()
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_import_saves_the_demonstration_with_the_project(
+    app, tmp_path, monkeypatch
+):
+    """Spec item 1: the demonstration is SAVED, not just read. After
+    a video import, the project on disk holds a Demonstration
+    record (probe facts, the tracked motion, the words) and the
+    recording itself inside the sealed media store -- and the
+    whole project still verifies on reopen."""
+    from mimforge.projects import open_project as store_open
+
+    window = _window(tmp_path)
+    project = _create_via_clicks(window)
+    window.transcriber = _StubTranscriber()
+    clip = _clip_with_audio(tmp_path)
+    _open_dialog(monkeypatch, clip)
+    window.author_panel.import_button.click()
+    assert "SAVED IN THE PROJECT" in (
+        window.author_panel.import_status_label.text()
+    )
+    stored = store_open(window.projects_dir, project.project_id)
+    demo = stored.get_record("demonstration", "current")
+    assert demo is not None
+    assert demo["source_name"] == clip.name
+    assert demo["stored_media"] == "media/demonstration.mp4"
+    media_file = (
+        window.projects_dir / project.project_id / "media"
+        / "demonstration.mp4"
+    )
+    assert media_file.is_file()
+    assert media_file.stat().st_size == clip.stat().st_size
+    assert demo["sha256"]
+    assert demo["track"]["coverage"] > 0.9
+    assert demo["track"]["times_s"], "the tracked motion is kept"
+    assert demo["transcript"]["engine"] == "stub"
+    assert demo["transcript"]["segments"]
+
+
+def test_step_approval_is_saved_the_moment_it_happens(
+    app, tmp_path
+):
+    """Approving a step persists immediately: the stored draft on
+    disk shows the approval without any project switch or lesson
+    build in between (closing the window loses nothing)."""
+    from mimforge.projects import open_project as store_open
+
+    window = _window(tmp_path)
+    project = _create_via_clicks(window)
+    panel = window.author_panel
+    panel.step_list.setCurrentRow(0)
+    panel.approve_button.click()
+    stored = store_open(window.projects_dir, project.project_id)
+    draft = stored.get_record("draft", "current")
+    assert draft["steps"][0]["status"] == "approved"
+
+
+def test_transcript_file_import_builds_the_draft(app, tmp_path):
+    """The narration fallback surface: an SRT transcript drafts
+    the steps when a recording's speech cannot be read; a bad
+    file is refused plainly and changes nothing."""
+    window = _window(tmp_path)
+    _create_via_clicks(window)
+    srt = tmp_path / "narration.srt"
+    srt.write_text(
+        "1\n"
+        "00:00:00,000 --> 00:00:04,000\n"
+        "Set up the stand, clamp the thread and measure the "
+        "length from the pivot to the centre.\n\n"
+        "2\n"
+        "00:00:04,000 --> 00:00:08,000\n"
+        "Displace the bob and release it to swing freely.\n",
+        encoding="utf-8",
+    )
+    draft = window.import_transcript_file(srt)
+    status = window.author_panel.import_status_label.text()
+    assert "TRANSCRIPT IMPORTED" in status
+    assert draft is not None
+    assert draft.transcript_engine == "srt"
+    assert len(draft.steps) == 9
+    before = window.author_panel.current_draft()
+    bad = tmp_path / "not-a-transcript.srt"
+    bad.write_text("plain prose, no subtitle blocks", encoding="utf-8")
+    assert window.import_transcript_file(bad) is None
+    assert "NOT A READABLE TRANSCRIPT" in (
+        window.author_panel.import_status_label.text()
+    )
+    assert window.author_panel.current_draft() is before
+
+
+def test_damaged_project_database_is_refused_plainly(app, tmp_path):
+    """A project whose database is damaged is refused in plain
+    words on the open click path -- no exception escapes."""
+    window = _window(tmp_path)
+    project = _create_via_clicks(window)
+    (project.root / "project.db").write_bytes(b"not a database")
+    window.open_project(project.project_id)
+    assert "COULD NOT BE OPENED" in (
+        window.projects_panel.status_label.text()
+    )
+
+
+def test_parts_file_prices_reach_the_design_panel(app, tmp_path):
+    """The parts database is editable: a parts.json beside the
+    projects (written with the PartsDB API) reprices the Design
+    panel's totals and materials table."""
+    from mimforge.bom import PartsDB
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir(parents=True)
+    db = PartsDB()
+    db.set_price("fasteners", 6000.0)
+    db.save(projects_dir / "parts.json")
+    window = _window(tmp_path)
+    _create_via_clicks(window)
+    totals = dict(window.bom_totals())
+    assert totals["prototype"] == 70500.0
+    tables = dict(window.bom_tables())
+    fasteners = next(
+        line
+        for line in tables["prototype"].lines
+        if line.part_id == "fasteners"
+    )
+    assert fasteners.unit_price_ngn == 6000.0
+    assert fasteners.line_total_ngn == 6000.0
+
+
+def test_signing_stores_the_safety_case_record(app, tmp_path):
+    """Sign-off also stores the core-schema SafetyCase view of the
+    assessment on the project (risk.to_safety_case, wired)."""
+    from mimforge.projects import open_project as store_open
+
+    window = _window(tmp_path)
+    project = _create_via_clicks(window)
+    _goto(window, "Deliver")
+    window.deliver_panel.teacher_edit.setText("Mrs A. Teacher")
+    window.deliver_panel.sign_button.click()
+    stored = store_open(window.projects_dir, project.project_id)
+    case = stored.get_record("safety_case", "current")
+    assert case is not None
+    assert case["signed_by_teacher"] is True
+    assert "Mrs A. Teacher" in case["summary"]
+    assert case["interlocks"]

@@ -309,3 +309,26 @@ def test_player_step_selection_and_no_lesson(app, lesson):
     assert player.current_index == 4
     assert "05" in player.step_title.text()
     assert player.replay_view.progress == pytest.approx(5 / 9)
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_lesson_load_validates_like_the_write_path():
+    """A hand-edited lesson with duplicate step orders is refused
+    on load: the invariants are not write-path-only."""
+    package = _demo_lesson()
+    data = package.to_dict()
+    data["steps"][1]["order"] = data["steps"][0]["order"]
+    with pytest.raises(ValueError):
+        LessonPackage.from_dict(data)
+
+
+def test_replay_from_points_rejects_a_silly_cap():
+    with pytest.raises(ValueError):
+        LessonReplay.from_points(
+            [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)],
+            label="x",
+            sample_hz=30.0,
+            max_points=1,
+        )

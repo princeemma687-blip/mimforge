@@ -118,3 +118,45 @@ def test_linear_fit_needs_two_points():
             oscillations=20,
             derived_fn=lambda p: p,
         )
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_formula_arithmetic_failures_are_formula_errors():
+    """Degenerate arithmetic in a template formula -- division by
+    a zero slope, a math-domain error, an overflow -- surfaces as
+    FormulaError, never as a raw ZeroDivisionError / ValueError /
+    OverflowError traceback."""
+    with pytest.raises(FormulaError):
+        evaluate_formula("4 * pi^2 / slope", {"slope": 0.0})
+    with pytest.raises(FormulaError):
+        evaluate_formula("sqrt(-1)", {})
+    with pytest.raises(FormulaError):
+        evaluate_formula("log(-1)", {})
+    with pytest.raises(FormulaError):
+        evaluate_formula("exp(10000)", {})
+    with pytest.raises(FormulaError):
+        evaluate_formula("10 % 0", {})
+
+
+def test_formula_complex_result_is_rejected():
+    """(-1)**0.5 is a complex number; the evaluator's contract is
+    a real float, so it is a FormulaError, not a complex 'value'
+    leaking into the recovered constant."""
+    with pytest.raises(FormulaError):
+        evaluate_formula("(-1) ** 0.5", {})
+
+
+def test_linear_fit_zero_fitted_points_are_not_nan():
+    """Residuals at points whose fitted value is 0 used to become
+    NaN and drop out of the maximum, so a degenerate fit silently
+    passed. An exact hit there is 0%; the maximum is a number."""
+    import math
+
+    fit = linear_fit([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+    assert fit.residuals_percent[0] == 0.0
+    assert not math.isnan(fit.max_abs_residual_percent)
+    assert fit.max_abs_residual_percent < 1e-9
+    flat = linear_fit([1.0, 2.0, 3.0], [0.0, 0.0, 0.0])
+    assert flat.max_abs_residual_percent == 0.0

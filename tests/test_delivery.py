@@ -139,6 +139,68 @@ def test_export_gate_refuses_until_a_teacher_signs(template_data, tmp_path):
     assert stored["signed_by"] == "Mrs A. Teacher"
 
 
+def test_exported_package_carries_the_itemised_bom(
+    template_data, tmp_path
+):
+    """The exported package must carry the necessary materials in
+    full: every tier's itemised lines inside bom.json, surviving
+    the signing + verification path unchanged."""
+    from mimforge.bom import TIERS, PartsDB, generate_bom
+    from mimforge.design import build_gantry
+
+    assessment = delivery.build_assessment(template_data)
+    risk.sign(assessment, "Mrs A. Teacher")
+    bundle = delivery.generate_checked_code(
+        template_data, GantryParameters()
+    )
+    files = delivery.package_files(
+        project_id="p1",
+        project_title="Demo",
+        template_name="pendulum",
+        template_data=template_data,
+        draft=None,
+        lesson=None,
+        assessment=assessment,
+        params=GantryParameters(),
+        code=bundle,
+    )
+    assert "bom.json" in files
+    private_pem, public_pem = signing.generate_keypair()
+    out = delivery.export_signed_package(
+        files, assessment, tmp_path / "pkg.tmachine", private_pem
+    )
+    manifest = signing.verify_package(out, public_pem)
+    assert "bom.json" in manifest["files"]
+    payload = signing.load_verified_package(out, public_pem)
+    stored = json.loads(payload["bom.json"])
+    part_ids = build_gantry(GantryParameters()).part_ids
+    db = PartsDB()
+    assert set(stored) == set(TIERS)
+    for tier in TIERS:
+        expected = generate_bom(db, tier, part_ids)
+        tier_data = stored[tier]
+        assert tier_data["total_ngn"] == expected.total_ngn
+        assert len(tier_data["lines"]) == len(expected.lines)
+        for stored_line, line in zip(
+            tier_data["lines"], expected.lines
+        ):
+            assert stored_line["name"] == line.name
+            assert stored_line["quantity"] == line.quantity
+            assert stored_line["unit_price_ngn"] == line.unit_price_ngn
+            assert stored_line["line_total_ngn"] == line.line_total_ngn
+            assert stored_line["line_total_ngn"] == (
+                stored_line["unit_price_ngn"] * stored_line["quantity"]
+            )
+    # A hard-number spot check: the shared fasteners kit, 1 x 5,000.
+    fasteners = [
+        line
+        for line in stored["prototype"]["lines"]
+        if line["part_id"] == "fasteners"
+    ]
+    assert len(fasteners) == 1
+    assert fasteners[0]["line_total_ngn"] == 5000
+
+
 def test_keypair_is_created_once_and_reused(tmp_path):
     first = delivery.load_or_create_keypair(tmp_path / "keys")
     second = delivery.load_or_create_keypair(tmp_path / "keys")
@@ -290,3 +352,14 @@ def test_firestore_unreachable_is_a_plain_failure():
     with pytest.raises(SyncError) as excinfo:
         backend.push("projects", "p1", {"title": "x"})
     assert "could not be reached" in str(excinfo.value)
+
+
+def test_design_fingerprint_tracks_the_parameters():
+    """The sign-off binding value: stable for one design, different
+    for a changed one."""
+    from mimforge.delivery import fingerprint_design
+    from mimforge.design import GantryParameters
+
+    base = fingerprint_design(GantryParameters())
+    assert base == fingerprint_design(GantryParameters())
+    assert base != fingerprint_design(GantryParameters(span_mm=800.0))

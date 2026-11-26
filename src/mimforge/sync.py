@@ -7,11 +7,12 @@ signed packages. Sync is an optional convenience behind a feature flag
 and every core workflow works with the network off and sync disabled
 (the offline gate, test T1.4).
 
-The live Firebase project does not exist yet (creation needs the
-owner's Google sign-in), so this module ships the flag, the offline
-gate, and a backend seam. The real Firestore client plugs into
-``register_backend`` when the project exists; until then the sync
-layer is inert and can never break local work.
+The Firebase project exists (created 2026-11-25, free Spark plan);
+the real backend is the stdlib Firestore REST client in
+``firebase_sync``, plugged in at this module's backend seam by the
+shell when sync is toggled on. This module stays the flag, the
+offline gate, and the seam -- and the layer can never break local
+work: every failure comes back as a SyncResult, never an exception.
 """
 
 from __future__ import annotations

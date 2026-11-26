@@ -106,3 +106,50 @@ def test_whisper_transcribes_real_speech(tmp_path):
     starts = [s.start_s for s in transcript.segments]
     assert starts == sorted(starts)
     assert all(s.end_s > s.start_s for s in transcript.segments)
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+from mimforge.perception import EngineUnavailable  # noqa: E402
+
+
+def test_whisper_model_load_failure_is_engine_unavailable(
+    tmp_path, monkeypatch
+):
+    """A first-run model download failure (or any load error) must
+    surface as EngineUnavailable -- the documented fallback signal
+    -- never as a raw exception through the import click path."""
+    import faster_whisper
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("no network for the model download")
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", _boom)
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"RIFF")
+    with pytest.raises(EngineUnavailable):
+        WhisperTranscriber(model="tiny").transcribe(audio)
+
+
+def test_whisper_empty_result_is_a_transcription_error(
+    tmp_path, monkeypatch
+):
+    """No usable output is TranscriptionError by the module's own
+    contract, so callers fall back instead of drafting nothing."""
+    import faster_whisper
+
+    class _Info:
+        language = "en"
+
+    class _SilentModel:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, path, beam_size=5):
+            return iter([]), _Info()
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", _SilentModel)
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"RIFF")
+    with pytest.raises(TranscriptionError):
+        WhisperTranscriber(model="tiny").transcribe(audio)

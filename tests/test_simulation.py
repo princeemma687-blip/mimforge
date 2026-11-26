@@ -91,3 +91,19 @@ def test_simulation_track_is_planar():
     assert np.max(np.abs(result.angles_rad)) == pytest.approx(
         8.0 * 3.141592653589793 / 180.0, abs=1e-3
     )
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+@pytest.mark.parametrize("bad", [0.0, -9.8, float("nan"), float("inf")])
+def test_world_constant_is_validated(bad):
+    """A bad world constant is a named validation failure, not a
+    ZeroDivisionError / math-domain crash mid-simulation."""
+    with pytest.raises(ValueError):
+        simulate_suspension(
+            GantryParameters(),
+            length_m=0.9,
+            release_deg=8.0,
+            world_constant=bad,
+        )

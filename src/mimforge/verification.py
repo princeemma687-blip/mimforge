@@ -20,11 +20,19 @@ it knows the *shape* of an observation spec (a varied quantity, a
 timed quantity, a derived quantity, a straight-line fit, a constant
 recovered from the slope), never any one practical's values.
 
-Note on the shape checks: at this stage there is no recorded
-demonstration track, so the planarity / amplitude checks run on the
-simulated track itself (the clean-run pattern the Phase 4 tests
-use); the substantive comparison -- demonstrated outcome versus
-simulated outcome -- uses the template's readings table.
+Note on the shape checks: when the project holds a recorded
+demonstration track (the Author import saves one), the planarity
+check compares THAT track against the simulated clean arc -- the
+machine-versus-human comparison the platform promises -- and the
+outcome says so (``track_basis == "demonstration"``). Until a
+demonstration is imported, the shape checks run on the simulated
+track itself and the outcome says that too
+(``track_basis == "simulation"``): a stand-in, never presented as
+a demonstrated comparison. The amplitude check needs swing angles,
+which a pixel track cannot honestly give, so it always runs on the
+simulated track. The outcome comparison -- demonstrated outcome
+versus simulated outcome -- uses the readings table either way,
+and the miscount check reads the demonstrated table's residuals.
 """
 
 from __future__ import annotations
@@ -83,6 +91,11 @@ class VerificationOutcome:
     graph: Optional[LessonGraph] = None
     replay: Optional[LessonReplay] = None
     engine: str = ""
+    engine_note: str = ""
+    #: What the shape checks were run against: "demonstration"
+    #: when a recorded demonstration track was supplied, else
+    #: "simulation" (the simulated track standing in for itself).
+    track_basis: str = "simulation"
 
     @property
     def passed(self) -> bool:
@@ -160,6 +173,7 @@ def run_verification(
     params: Optional[GantryParameters] = None,
     release_deg: float = RELEASE_DEG,
     length_scale: float = 1.0,
+    teacher_track: Optional[dict[str, Any]] = None,
 ) -> VerificationOutcome:
     """Run the full verification for one template and return every
     artefact the shell needs (fits, report, run record, lesson
@@ -275,14 +289,30 @@ def run_verification(
     )
 
     main_sim = max(sims, key=lambda s: s.length_m)
+    # Shape checks: against the recorded demonstration track when
+    # the project holds one (the serialised track the Author import
+    # saved), otherwise against the simulated track itself, with
+    # the basis recorded on the outcome either way.
+    import numpy as np
+
+    track_basis = "simulation"
+    teacher_points = main_sim.track_xy
+    if teacher_track:
+        xs = list(teacher_track.get("xs_px") or [])
+        ys = list(teacher_track.get("ys_px") or [])
+        if len(xs) >= 3 and len(xs) == len(ys):
+            teacher_points = np.array(
+                list(zip(xs, ys)), dtype=float
+            )
+            track_basis = "demonstration"
     report = assess(
-        teacher_points_xy=main_sim.track_xy,
+        teacher_points_xy=teacher_points,
         sim_points_xy=main_sim.track_xy,
         teacher_angles_rad=main_sim.angles_rad,
         teacher_value=float(teacher_fit["recovered_value"]),
         sim_value=float(sim_fit["recovered_value"]),
         band_percent=float(band),
-        residuals_percent=list(sim_fit["residuals_percent"]),
+        residuals_percent=list(teacher_fit["residuals_percent"]),
     )
     attach_diagnoses(report, list(template_data.get("discrepancy_checks") or []))
     run = to_verification_run(
@@ -339,6 +369,8 @@ def run_verification(
         graph=graph,
         replay=replay,
         engine=main_sim.engine,
+        engine_note=main_sim.engine_note,
+        track_basis=track_basis,
     )
 
 

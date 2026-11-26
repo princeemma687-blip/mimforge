@@ -133,12 +133,32 @@ def test_generated_panel_builds_with_the_template_controls(app, template):
 
 
 def test_generated_panel_without_kernel_only_updates_status(app, template):
+    """Without a kernel, Release/Stop must say so honestly -- the
+    old text claimed "Released."/"Stopped." when nothing had
+    happened at all (full spec audit, 2026-11-26)."""
     source = generate_control_panel(template)
     namespace: dict = {"__name__": "generated_panel"}
     exec(compile(source, "<generated-panel>", "exec"), namespace)
     panel = namespace["ControlPanel"]()
     panel.on_release()
-    assert panel.status.text() == "Released."
+    assert "nothing was released" in panel.status.text()
     panel.on_stop()
-    assert panel.status.text() == "Stopped."
+    assert "nothing was stopped" in panel.status.text()
+    panel.close()
+
+
+def test_generated_panel_always_has_a_stop_button(app):
+    """A template whose control list forgets the stop entry still
+    gets a Stop button: an operator surface without one is not
+    finished."""
+    template = {
+        "practical": {"title": "No stop listed"},
+        "control_panel": ["release", "readings table"],
+        "observation_spec": {"columns": [], "rows": []},
+    }
+    source = generate_control_panel(template)
+    namespace: dict = {"__name__": "generated_panel_nostop"}
+    exec(compile(source, "<generated-panel>", "exec"), namespace)
+    panel = namespace["ControlPanel"]()
+    assert hasattr(panel, "stop_button")
     panel.close()

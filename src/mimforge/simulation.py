@@ -164,6 +164,15 @@ def simulate_suspension(
     ``duration_s`` defaults to 12.5 small-angle periods, long enough
     for two independent half-run period estimates.
     """
+    if not math.isfinite(world_constant) or world_constant <= 0:
+        raise ValueError(
+            "world_constant must be a positive finite number, got "
+            f"{world_constant!r}"
+        )
+    if not math.isfinite(length_m) or length_m <= 0:
+        raise ValueError(
+            f"length_m must be a positive finite number, got {length_m!r}"
+        )
     if duration_s is None:
         small_angle_period = 2.0 * math.pi * math.sqrt(length_m / world_constant)
         duration_s = 12.5 * small_angle_period

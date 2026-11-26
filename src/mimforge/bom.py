@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 TIERS = ("prototype", "professional", "industrial")
 
@@ -64,6 +65,27 @@ class Bom:
 
     def untraced_lines(self) -> list[BomLine]:
         return [line for line in self.lines if line.trace == "untraced"]
+
+
+def bom_to_dict(bom: Bom) -> dict[str, Any]:
+    """JSON-safe form of one tier's BOM: every itemised line plus
+    the tier total -- the same lines the Design panel shows and the
+    delivery package carries, so the two can never drift apart."""
+    return {
+        "tier": bom.tier,
+        "lines": [
+            {
+                "part_id": line.part_id,
+                "name": line.name,
+                "quantity": line.quantity,
+                "unit_price_ngn": line.unit_price_ngn,
+                "line_total_ngn": line.line_total_ngn,
+                "trace": line.trace,
+            }
+            for line in bom.lines
+        ],
+        "total_ngn": bom.total_ngn,
+    }
 
 
 def default_parts() -> list[Part]:

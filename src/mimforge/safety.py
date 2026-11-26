@@ -12,13 +12,18 @@ Rules, in order:
 2. A commanded speed above the cap is clamped to the cap and logged.
 3. A commanded force above the cap is refused outright (no motion) and
    logged, and the stop is latched -- a force violation is treated as a
-   fault, not a rounding error.
+   fault, not a rounding error. A command carrying a force when the
+   safety limits set NO force cap is refused the same way (fail
+   closed), and so is any command with a non-finite speed, force or
+   duration -- NaN defeats comparisons, so it is treated as a fault,
+   never as "within caps".
 4. Every accepted, clamped, refused or stopped command is appended to
    the audit log, which is the safeguarding record for a run.
 """
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -32,6 +37,7 @@ class CommandOutcome(str, Enum):
     CLAMPED = "clamped"
     REFUSED = "refused"
     STOPPED = "stopped"
+    RESET = "reset"
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,21 @@ class SafetyKernel:
 
     def __init__(self, limits: Optional[SafetyLimits] = None) -> None:
         self.limits = limits or SafetyLimits()
+        # The caps are the safety case: a nonsensical cap (negative,
+        # zero, NaN, infinite) must fail loudly at startup, never
+        # silently become an absent or inverted limit at run time.
+        for name, value in (
+            ("max_tool_speed_mm_s", self.limits.max_tool_speed_mm_s),
+            ("max_force_n", self.limits.max_force_n),
+            ("max_payload_kg", self.limits.max_payload_kg),
+        ):
+            if value is None:
+                continue
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(
+                    f"safety limit {name} must be a positive finite "
+                    f"number, got {value!r}"
+                )
         self._stopped = False
         self._audit: list[AuditEntry] = []
 
@@ -85,7 +106,7 @@ class SafetyKernel:
         """Deliberate teacher reset. Motion never resumes automatically."""
         self._stopped = False
         self._log(
-            CommandOutcome.ACCEPTED,
+            CommandOutcome.RESET,
             "",
             f"stop reset by operator {operator!r}; motion re-armed deliberately",
         )
@@ -100,9 +121,42 @@ class SafetyKernel:
             )
             self._log(result.outcome, command.primitive.value, result.detail)
             return result
+        # Non-finite values defeat every comparison below (NaN is
+        # neither above nor below any cap), so they are a fault in
+        # their own right: refuse and latch, like a force violation.
+        if (
+            not math.isfinite(command.speed_mm_s)
+            or (command.force_n is not None and not math.isfinite(command.force_n))
+            or (
+                command.duration_s is not None
+                and not math.isfinite(command.duration_s)
+            )
+        ):
+            self._stopped = True
+            result = CommandResult(
+                CommandOutcome.REFUSED,
+                0.0,
+                "refused: a non-finite speed, force or duration is a "
+                "fault, not a motion; stop latched",
+            )
+            self._log(result.outcome, command.primitive.value, result.detail)
+            return result
         if command.speed_mm_s < 0:
             result = CommandResult(
                 CommandOutcome.REFUSED, 0.0, "refused: negative speed is not a motion"
+            )
+            self._log(result.outcome, command.primitive.value, result.detail)
+            return result
+        if command.force_n is not None and self.limits.max_force_n is None:
+            # Fail closed: a force the project's safety case never
+            # limited must not run. Generated controllers command
+            # speed only, so this bites only faulty/hostile code.
+            self._stopped = True
+            result = CommandResult(
+                CommandOutcome.REFUSED,
+                0.0,
+                "refused: the command carries a force but the safety "
+                "limits set no force cap; stop latched",
             )
             self._log(result.outcome, command.primitive.value, result.detail)
             return result

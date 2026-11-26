@@ -68,6 +68,11 @@ class DraftStep:
     safety_notes: list[str] = field(default_factory=list)
     check_question: str = ""
     advisor_used: str = "offline"
+    # Transient: the teacher's actual spoken words assigned to this
+    # step, kept only for the advisor call during build_draft. It is
+    # deliberately NOT serialised -- the stored record keeps the
+    # spans, and the words live in the project's transcript record.
+    spoken_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,7 +199,13 @@ class WorkerAdvisor:
                 body = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError, OSError):
             return None
+        # A misbehaving Worker (non-object JSON, a non-string text)
+        # must degrade to the offline draft, never crash the build.
+        if not isinstance(body, dict):
+            return None
         text = body.get("text") or body.get("draft") or ""
+        if not isinstance(text, str):
+            return None
         return text.strip() or None
 
 
@@ -250,6 +261,9 @@ def segment_transcript(
                 apparatus_refs=list(step.apparatus_refs),
                 safety_notes=list(step.safety_notes),
                 check_question=step.check_question,
+                spoken_text=" ".join(
+                    s.text.strip() for s, _ in segs if s.text.strip()
+                ),
             )
         )
     return drafts, unassigned
@@ -273,7 +287,8 @@ def build_draft(
             )
         context = {
             "template_narration": draft.draft_text,
-            "spoken": " ".join(
+            "spoken": draft.spoken_text,
+            "spoken_spans": " ".join(
                 f"[{s[0]:.1f}-{s[1]:.1f}s]" for s in draft.source_spans
             ),
         }
@@ -288,8 +303,9 @@ def build_draft(
         )
     if track_coverage is not None and track_coverage < 0.98:
         warnings.append(
-            f"tracked-object coverage {track_coverage:.1%} is below the "
-            "98% target -- check the footage for occlusions"
+            f"tracked-object coverage {track_coverage:.1%} of the "
+            "examined frames is below the 98% target -- check the "
+            "footage for occlusions"
         )
     return AuthoringDraft(
         template_id=template.id,

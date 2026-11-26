@@ -78,7 +78,16 @@ from mimforge.safety import MotionCommand
 
 
 def _escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape a template string for a double-quoted Python literal,
+    including the control characters that would otherwise break
+    the generated source line."""
+    return (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
 
 
 def generate_controller(template: dict, design_parameters: dict | None = None) -> str:
@@ -110,10 +119,25 @@ def generate_controller(template: dict, design_parameters: dict | None = None) -
         step_title = step.get("title", "")
         lines.append(f"    # Step {step.get('order', '?')}: {step_title}")
         duration = step.get("duration_hint_s")
-        duration_arg = f", duration_s={float(duration)}" if duration else ""
+        if duration:
+            try:
+                duration_arg = f", duration_s={float(duration)}"
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"step {step.get('order', '?')}: duration_hint_s "
+                    f"is not a number: {duration!r}"
+                ) from None
+        else:
+            duration_arg = ""
         emitted = False
         for prim in step.get("motion_primitives", []):
-            ptype = MotionPrimitiveType(prim.get("type", ""))
+            try:
+                ptype = MotionPrimitiveType(prim.get("type", ""))
+            except ValueError:
+                raise ValueError(
+                    f"step {step.get('order', '?')}: unknown motion "
+                    f"primitive type: {prim.get('type')!r}"
+                ) from None
             if ptype in _MOTION_PRIMITIVES:
                 speed = _PRIMITIVE_SPEEDS[ptype]
                 lines.append(
@@ -277,19 +301,34 @@ def generate_control_panel(template: dict) -> str:
     lines.append("        self.layout.addWidget(self.status)")
     for control in controls:
         lines.extend(_panel_widget_snippet(str(control), selector_options, columns))
+    if not any("stop" in str(c).lower() for c in controls):
+        # Every generated panel carries a Stop button, whether or
+        # not the template's control list remembered to ask for
+        # one: an operator surface without a stop is not finished.
+        lines.extend(_panel_widget_snippet("stop", selector_options, columns))
     lines.append("")
     lines.append("    def on_release(self):")
     lines.append('        """Release through the safety kernel, if one is set."""')
-    lines.append("        if self.kernel is not None:")
-    lines.append("            self.kernel.execute(MotionCommand(")
-    lines.append("                primitive=MotionPrimitiveType.RELEASE,")
-    lines.append("                speed_mm_s=0.0))")
+    lines.append("        if self.kernel is None:")
+    lines.append(
+        '            self.status.setText('
+        '"No safety kernel attached — nothing was released.")'
+    )
+    lines.append("            return")
+    lines.append("        self.kernel.execute(MotionCommand(")
+    lines.append("            primitive=MotionPrimitiveType.RELEASE,")
+    lines.append("            speed_mm_s=0.0))")
     lines.append('        self.status.setText("Released.")')
     lines.append("")
     lines.append("    def on_stop(self):")
     lines.append('        """Latch the monitored stop through the kernel."""')
-    lines.append("        if self.kernel is not None:")
-    lines.append('            self.kernel.trigger_stop("operator stop")')
+    lines.append("        if self.kernel is None:")
+    lines.append(
+        '            self.status.setText('
+        '"No safety kernel attached — nothing was stopped.")'
+    )
+    lines.append("            return")
+    lines.append('        self.kernel.trigger_stop("operator stop")')
     lines.append('        self.status.setText("Stopped.")')
     lines.append("")
     lines.append("")

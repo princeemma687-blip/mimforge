@@ -44,6 +44,15 @@ class GantryParameters:
             raise ValueError("span must exceed twice the section size")
         if self.height_mm <= 0 or self.section_mm <= 0:
             raise ValueError("height and section must be positive")
+        for name in (
+            "foot_height_mm",
+            "carriage_width_mm",
+            "carriage_height_mm",
+            "spool_radius_mm",
+            "spool_length_mm",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be positive")
         if self.base_depth_mm <= self.section_mm:
             raise ValueError("base depth must exceed the section size")
         if abs(self.carriage_x_mm) + self.carriage_width_mm / 2 > (
@@ -75,6 +84,10 @@ class GantryDesign:
     # importing the heavy CAD kernel at module import time for callers
     # that only need the parameter types.
     parts: list[GantryPart] = field(default_factory=list)
+    # The beam and upright sub-solids, kept unfused so measurements
+    # can be read back from the geometry itself, not the parameters.
+    beam_solid: object = None
+    uprights_solid: object = None
 
     @property
     def part_ids(self) -> list[str]:
@@ -126,7 +139,13 @@ def build_gantry(params: GantryParameters) -> GantryDesign:
         GantryPart("release_gate", "Release gate"),
         GantryPart("sensor_bracket", "Sensor bracket"),
     ]
-    return GantryDesign(parameters=params, solid=solid, parts=parts)
+    return GantryDesign(
+        parameters=params,
+        solid=solid,
+        parts=parts,
+        beam_solid=beam,
+        uprights_solid=uprights,
+    )
 
 
 @dataclass
@@ -142,20 +161,31 @@ class GantryMeasurements:
 
 
 def measure_gantry(design: GantryDesign) -> GantryMeasurements:
-    """Measure the built solid's bounding box.
-
-    Expected values derive from the parameters: span is the X extent,
-    height is upright height + one beam section (the beam sits on top),
-    depth is the foot length (feet are the deepest feature).
-    """
+    """Measure the built solid: overall dimensions from the fused
+    solid's bounding box, beam length and upright height from the
+    kept beam / upright sub-solids' own bounding boxes -- read
+    back from the geometry, never echoed from the parameters (a
+    design assembled by hand without sub-solids falls back to the
+    overall extents for the beam and the parameter for the
+    uprights, the only honest options left there)."""
     box = design.solid.bounding_box()
     size = box.size
+    beam_length = (
+        float(design.beam_solid.bounding_box().size.X)
+        if design.beam_solid is not None
+        else float(size.X)
+    )
+    upright_height = (
+        float(design.uprights_solid.bounding_box().size.Z)
+        if design.uprights_solid is not None
+        else design.parameters.height_mm
+    )
     return GantryMeasurements(
         overall_span_mm=float(size.X),
         overall_height_mm=float(size.Z),
         overall_depth_mm=float(size.Y),
-        beam_length_mm=design.parameters.span_mm,
-        upright_height_mm=design.parameters.height_mm,
+        beam_length_mm=beam_length,
+        upright_height_mm=upright_height,
         suspension_range_mm=design.parameters.suspension_range_mm,
     )
 

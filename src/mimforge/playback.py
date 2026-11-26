@@ -134,6 +134,8 @@ class LessonReplay:
     ) -> "LessonReplay":
         """Build a replay from a full-resolution track, downsampling
         uniformly when it exceeds ``max_points`` (endpoints kept)."""
+        if max_points < 2:
+            raise ValueError("max_points must be at least 2")
         if len(points) > max_points:
             step = (len(points) - 1) / (max_points - 1)
             picked = [points[int(round(i * step))] for i in range(max_points)]
@@ -270,7 +272,7 @@ class LessonPackage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LessonPackage":
-        return cls(
+        package = cls(
             title=data["title"],
             subject=data["subject"],
             template_id=data["template_id"],
@@ -283,6 +285,11 @@ class LessonPackage:
             precautions=list(data.get("precautions", [])),
             provenance=dict(data.get("provenance", {})),
         )
+        # The invariants are enforced on the load path too, not
+        # only on the write path: a hand-edited or corrupted lesson
+        # file is refused here instead of playing nonsense.
+        package.validate()
+        return package
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)

@@ -18,8 +18,13 @@ slice + the generic architecture.
   practical, with the pendulum as its first instance.
 - **One platform**: the parameterised bench gantry (the pendulum machine is
   a configuration of it, not a bespoke design).
-- **Deterministic trajectory retargeting** (kinematic mapping, time-scaling,
-  primitive sequencing) built in-house.
+- **Demonstration ↔ simulation comparison**: the recorded demonstration
+  track is compared against the simulated machine track by the
+  discrepancy engine. **Deterministic trajectory retargeting**
+  (kinematic mapping, time-scaling, primitive sequencing) was listed
+  here in the original freeze but is **deferred post-V1** (amended
+  2026-11-26, full spec audit: the code never contained it, and the
+  honest V1 behaviour is comparison, not retargeting).
 - **Template-based codegen** over the safety-kernel primitive API, plus a
   generated control panel. Muse Spark (via the owner's Cloudflare Worker)
   may *draft* text/code for review; offline fallbacks exist for every
@@ -27,14 +32,21 @@ slice + the generic architecture.
 - **Safety kernel**: controller-enforced speed/force caps, monitored stop,
   generated risk assessment with a blocking teacher sign-off gate,
   Ed25519-signed `.tmachine` packages with hash verification.
-- **Firebase Auth + Firestore metadata sync** (free Spark plan), behind a
+- **Firestore metadata sync** (free Spark plan), behind a
   feature flag, with a hard offline gate: every core workflow must work
-  with the network off and Firebase disabled.
-- **QNX target (later phase, placeholder in this package)**: the
-  timing-critical controller loop ported to C on QNX 8.0 under QEMU; the
-  Windows app as host tool. Category: **Robotics & Medical**.
+  with the network off and Firebase disabled. **Firebase Auth is not
+  integrated in this build** (amended 2026-11-26): sync is
+  unauthenticated REST, and production rules refuse it until a
+  sign-in surface exists — future scope.
+- **QNX target**: the timing-critical controller loop exists as C in
+  this package (`qnx/`, host build + test suite green); the SDP 8.0
+  cross-build and QEMU run are the pending step (they need the
+  owner's signed-in myQNX session). The Windows app as host tool.
+  Category: **Robotics & Medical**.
 - **Lean mode from day one** (target hardware: Core i3/i5, 4 GB RAM,
-  Windows 10): small model variants only (Whisper *base*, SAM 2.1 *tiny*),
+  Windows 10): small models only (Whisper *base*, downloaded on first
+  use; SAM 2.1 was planned here but is **not integrated in this
+  build** — perception is the colour-prompt object track),
   sequential model load/unload, keyframe sampling, CPU-first inference,
   precomputed simulation replay for lesson playback on school PCs.
 - **Lesson playback** on low-end school PCs (no engine, no models, no

@@ -91,3 +91,17 @@ def test_periodic_analysis_rejects_flat_track():
     y = np.zeros_like(t)
     with pytest.raises(ValueError):
         period_from_crossings(upward_crossing_times(t, y))
+
+
+# ------------------------------------------- full spec audit (2026-11-26)
+
+
+def test_split_period_estimates_rejects_no_intervals():
+    """No intervals must raise, not return NaN 'estimates'."""
+    import numpy as np
+    import pytest
+
+    from mimforge.perception import split_period_estimates
+
+    with pytest.raises(ValueError):
+        split_period_estimates(np.array([]))

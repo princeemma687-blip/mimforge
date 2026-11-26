@@ -30,8 +30,9 @@ from typing import Any
 
 from . import risk, signing
 from .allowlist import AllowlistReport, check_source
+from .bom import TIERS, PartsDB, bom_to_dict, generate_bom
 from .codegen import generate_control_panel, generate_controller
-from .design import PLATFORM_ID, GantryParameters
+from .design import PLATFORM_ID, GantryParameters, build_gantry
 from .risk import HazardEntry, RiskAssessment
 
 __all__ = [
@@ -39,9 +40,11 @@ __all__ = [
     "DeliveryError",
     "assessment_from_dict",
     "assessment_to_dict",
+    "bom_payload",
     "build_assessment",
     "design_parameters",
     "export_signed_package",
+    "fingerprint_design",
     "generate_checked_code",
     "load_or_create_keypair",
     "package_files",
@@ -69,7 +72,20 @@ def build_assessment(template_data: dict) -> RiskAssessment:
         platform_id=str(template_data.get("platform_id") or PLATFORM_ID),
         template_hazards=list(hazard_profile.get("hazards", []) or []),
         template_id=str(template_data.get("template_id", "")),
+        template_severity=str(hazard_profile.get("severity", "") or ""),
     )
+
+
+def fingerprint_design(params: GantryParameters) -> str:
+    """A stable fingerprint of one design's parameters: the value
+    a risk sign-off is bound to, so a sign-off made for one design
+    cannot quietly cover a changed one."""
+    import hashlib
+
+    canonical = json.dumps(
+        design_parameters(params), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def assessment_to_dict(assessment: RiskAssessment) -> dict[str, Any]:
@@ -97,6 +113,7 @@ def assessment_from_dict(data: dict[str, Any]) -> RiskAssessment:
         signed_by=data.get("signed_by"),
         signed_at=data.get("signed_at"),
         signoff_hash=data.get("signoff_hash"),
+        design_fingerprint=str(data.get("design_fingerprint", "") or ""),
     )
 
 
@@ -167,6 +184,25 @@ def generate_checked_code(
 # --------------------------------------------------------------- package
 
 
+def bom_payload(
+    params: GantryParameters, db: PartsDB | None = None
+) -> dict[str, Any]:
+    """The itemised bill of materials for every tier, priced from
+    the parts database: each tier's lines (part, quantity, unit
+    price, line total) plus its total. This is the platform spec's
+    "tell the user the necessary materials" in data form -- the
+    Design panel renders the same lines, and the exported package
+    carries them, so what the teacher sees is what the receiver
+    gets. ``db`` lets the caller price from the same (possibly
+    edited) parts database the panel used."""
+    part_ids = build_gantry(params).part_ids
+    db = db if db is not None else PartsDB()
+    return {
+        tier: bom_to_dict(generate_bom(db, tier, part_ids))
+        for tier in TIERS
+    }
+
+
 def package_files(
     *,
     project_id: str,
@@ -178,6 +214,7 @@ def package_files(
     assessment: RiskAssessment,
     params: GantryParameters,
     code: CodeBundle,
+    parts_db: PartsDB | None = None,
 ) -> dict[str, bytes]:
     """The payload files of one delivery package, as name -> bytes."""
 
@@ -196,6 +233,7 @@ def package_files(
         "template.json": as_json(template_data),
         "risk_assessment.json": as_json(assessment_to_dict(assessment)),
         "design.json": as_json(design_parameters(params)),
+        "bom.json": as_json(bom_payload(params, parts_db)),
         "controller.py": code.controller.encode("utf-8"),
         "control_panel.py": code.control_panel.encode("utf-8"),
     }

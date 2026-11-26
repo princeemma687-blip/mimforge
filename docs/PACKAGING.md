@@ -21,7 +21,8 @@ for the licence conditions.
 ## Build on Windows (Prince's laptop)
 
 ```powershell
-# 1. Toolchain first (FFmpeg LGPL build, Python 3.11+):
+# 1. Toolchain first (Python 3.12; FFmpeg is a separate manual
+#    install -- see the packaging limits below):
 .\setup\windows-toolchain.ps1
 
 # 2. Build + installer (runs the FULL pytest suite as a gate first):
@@ -61,17 +62,19 @@ the deliverable and is verified on Prince's laptop.
 ## Known packaging limits (honest)
 
 - **FFmpeg is not bundled.** Video ingest shells out to a system
-  FFmpeg installed by `setup/windows-toolchain.ps1`. A future step
-  may vendor the LGPL FFmpeg binaries into the installer; until
-  then the toolchain script is a stated prerequisite, and the app
-  must fail with a plain message (not a crash) when FFmpeg is
-  missing.
+  FFmpeg. Installing FFmpeg is a **manual prerequisite** (the
+  toolchain script deliberately does not install it — see its
+  header); a machine without it gets a plain "the video tools are
+  not available" message from the app, not a crash. A future step
+  may vendor the LGPL FFmpeg binaries into the installer.
 - **No code signing.** The installer is unsigned; SmartScreen will
   warn. A signing certificate costs money and is a convenience
   only — not bought, per the no-money rule.
-- **Lean mode is the default.** The bundled Whisper model is the
-  `base` size and SAM 2.1 `tiny` (see `src/mimforge/config.py`).
-  The full profile is a runtime switch, not a second installer.
+- **Lean mode is the default.** The Whisper model is the `base`
+  size and is **not bundled**: it downloads on first transcription
+  (~150 MB, needs a connection once). SAM 2.1 is **not in this
+  build** at all (see `docs/SBOM.md` status section). The full
+  profile is a runtime switch, not a second installer.
 - **QNX evidence is separate.** The QNX C controller (`qnx/`) is
   not inside the Windows installer; its build/run evidence lives
   in the repo and the submission package (see `docs/SUBMISSION.md`).

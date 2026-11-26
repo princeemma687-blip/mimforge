@@ -171,7 +171,25 @@ def check_period_outliers(
         return None
     median = float(np.median(residuals))
     worst = int(np.argmax(residuals))
-    if median > 0 and residuals[worst] > factor * median and residuals[worst] > 1.0:
+    if residuals[worst] <= 1.0:
+        return None
+    if median == 0:
+        # Every other row fits exactly and one row is off: that is
+        # the clearest miscount case there is, and a median of zero
+        # must not silence it (any positive residual is infinitely
+        # far from a zero median).
+        return DiscrepancyFinding(
+            check_id=CHECK_MISCOUNT,
+            metric="worst_residual_percent",
+            value=float(residuals[worst]),
+            threshold=0.0,
+            detail=(
+                f"row {worst} residual {residuals[worst]:.2f}% while "
+                "every other row fits exactly: one timing run looks "
+                "miscounted"
+            ),
+        )
+    if residuals[worst] > factor * median:
         return DiscrepancyFinding(
             check_id=CHECK_MISCOUNT,
             metric="worst_residual_percent",
@@ -209,32 +227,41 @@ def assess(
     findings: list[DiscrepancyFinding] = []
     metrics: dict[str, float] = {}
 
-    teacher_ell = ellipticity(teacher_points_xy)
+    teacher_points = np.asarray(teacher_points_xy, dtype=float)
+    metrics["teacher_track_points"] = float(len(teacher_points))
     sim_ell = ellipticity(sim_points_xy)
-    metrics["teacher_ellipticity"] = teacher_ell
     metrics["sim_ellipticity"] = sim_ell
-    # A planar swing traces an arc, not a line, so a clean track has
-    # a small but non-zero ellipticity (about 0.035 at an 8-degree
-    # release). The check is therefore differential: the teacher's
-    # track is flagged only when it is *more* elliptical than the
-    # simulation's clean arc by more than the limit.
-    ell_gap = teacher_ell - sim_ell
-    metrics["ellipticity_gap"] = ell_gap
-    if ell_gap > ellipticity_limit:
-        findings.append(
-            DiscrepancyFinding(
-                check_id=CHECK_CONICAL,
-                metric="ellipticity_gap",
-                value=ell_gap,
-                threshold=ellipticity_limit,
-                detail=(
-                    f"[teacher] track ellipticity {teacher_ell:.2f} exceeds "
-                    f"the simulated clean arc ({sim_ell:.2f}) by "
-                    f"{ell_gap:.2f}, over the {ellipticity_limit:.2f} limit: "
-                    "the motion is not confined to one vertical plane"
-                ),
+    if len(teacher_points) >= 3:
+        metrics["planarity_checked"] = 1.0
+        teacher_ell = ellipticity(teacher_points)
+        metrics["teacher_ellipticity"] = teacher_ell
+        # A planar swing traces an arc, not a line, so a clean track has
+        # a small but non-zero ellipticity (about 0.035 at an 8-degree
+        # release). The check is therefore differential: the teacher's
+        # track is flagged only when it is *more* elliptical than the
+        # simulation's clean arc by more than the limit.
+        ell_gap = teacher_ell - sim_ell
+        metrics["ellipticity_gap"] = ell_gap
+        if ell_gap > ellipticity_limit:
+            findings.append(
+                DiscrepancyFinding(
+                    check_id=CHECK_CONICAL,
+                    metric="ellipticity_gap",
+                    value=ell_gap,
+                    threshold=ellipticity_limit,
+                    detail=(
+                        f"[teacher] track ellipticity {teacher_ell:.2f} exceeds "
+                        f"the simulated clean arc ({sim_ell:.2f}) by "
+                        f"{ell_gap:.2f}, over the {ellipticity_limit:.2f} limit: "
+                        "the motion is not confined to one vertical plane"
+                    ),
+                )
             )
-        )
+    else:
+        # Too few points to judge planarity: the check is recorded
+        # as not run, never as passed -- a missing track must not
+        # read as a clean planar swing.
+        metrics["planarity_checked"] = 0.0
 
     if teacher_angles_rad is not None:
         amp = max_amplitude_deg(teacher_angles_rad)
