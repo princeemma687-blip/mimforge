@@ -98,14 +98,22 @@ class SamError(Exception):
 
 
 def weights_dir(base: str | Path | None = None) -> Path:
-    """Where the model files live: ``MIMFORGE_SAM_DIR`` when set,
-    else a ``models`` folder beside the app's projects folder."""
+    """Where the model files live. Resolution goes through the
+    Resource Layer (Stage 0): ``MIMFORGE_SAM_DIR`` when set, an
+    explicit ``base`` next, then the BUNDLED copy inside the app,
+    then the per-user ``Mimforge`` folder (where the first-run /
+    repair download writes)."""
     override = os.environ.get("MIMFORGE_SAM_DIR")
     if override:
         return Path(override)
     if base is not None:
         return Path(base) / "models" / MODEL_FOLDER
-    return Path.home() / "Mimforge" / "models" / MODEL_FOLDER
+    from . import resources
+
+    resolved = resources.sam_weights_dir()
+    if resolved is not None:
+        return resolved
+    return resources.sam_weights_repair_dir()
 
 
 def _file_ok(path: Path, size: int, sha256: str) -> bool:

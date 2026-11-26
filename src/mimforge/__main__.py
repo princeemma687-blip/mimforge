@@ -42,10 +42,12 @@ SELF_TEST_MODULES = [
     "mimforge.perception",
     "mimforge.playback",
     "mimforge.projects",
+    "mimforge.resources",
     "mimforge.retarget",
     "mimforge.risk",
     "mimforge.safety",
     "mimforge.sam_tracker",
+    "mimforge.selftest_flows",
     "mimforge.signing",
     "mimforge.simulation",
     "mimforge.structuring",
@@ -87,12 +89,22 @@ SELF_TEST_PACKAGES = [
 ]
 
 
-def self_test() -> int:
+def self_test(flows: bool = False) -> int:
     """Import the full graph and construct the main window.
 
     Offscreen Qt, a throwaway projects directory, no network, no
     Firebase, no user files. Returns 0 (printing ``SELF-TEST OK``)
     on success; prints the traceback and returns 1 on any failure.
+
+    Gate v2 (Stage 0): in a FROZEN build the real-flow probes
+    (``selftest_flows``) always run as part of ``--self-test`` --
+    they exercise the bundled ffmpeg/ffprobe, SAM weights, Whisper
+    model, Firebase config and sample clip with the OS PATH
+    scrubbed, so a resource missing from the bundle fails the
+    build here instead of on a user's machine. In a source
+    checkout the probes run only when asked (``--self-test=flows``),
+    because they need the packaging fetch step's ``bundled/``
+    folder to exist.
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     import importlib
@@ -115,6 +127,12 @@ def self_test() -> int:
         traceback.print_exc()
         print("SELF-TEST FAILED", flush=True)
         return 1
+    if flows or getattr(sys, "frozen", False):
+        from mimforge.selftest_flows import flows_main
+
+        if flows_main() != 0:
+            print("SELF-TEST FAILED (flow probes)", flush=True)
+            return 1
     print("SELF-TEST OK", flush=True)
     return 0
 
@@ -126,6 +144,9 @@ def self_test() -> int:
 from mimforge.ui.main_window import run
 
 if __name__ == "__main__":
-    if "--self-test" in sys.argv[1:]:
+    _args = sys.argv[1:]
+    if "--self-test=flows" in _args:
+        raise SystemExit(self_test(flows=True))
+    if "--self-test" in _args:
         raise SystemExit(self_test())
     raise SystemExit(run())

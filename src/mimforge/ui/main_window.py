@@ -249,6 +249,19 @@ def _slugify(title: str) -> str:
     return slug or "project"
 
 
+def _documents_dir() -> Path:
+    """The user's Documents folder -- where save dialogs open
+    (Stage 0, finding #3: they used to open in the app's install
+    folder, because a bare filename defaults to the process
+    working directory). Falls back to the home folder."""
+    from PySide6.QtCore import QStandardPaths
+
+    location = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation
+    )
+    return Path(location) if location else Path.home()
+
+
 class SafetyPanel(QWidget):
     """Safety panel: monitored-stop control + audit readout.
 
@@ -1104,7 +1117,7 @@ class MainWindow(QMainWindow):
             chosen, _selected = QFileDialog.getSaveFileName(
                 self,
                 "Export lesson",
-                f"{lesson.title}.html",
+                str(_documents_dir() / f"{lesson.title}.html"),
                 "HTML files (*.html)",
             )
             if not chosen:
@@ -1142,7 +1155,7 @@ class MainWindow(QMainWindow):
             chosen, _selected = QFileDialog.getSaveFileName(
                 self,
                 f"Export {kind.upper()}",
-                f"machine{suffix}",
+                str(_documents_dir() / f"machine{suffix}"),
                 f"CAD files (*{suffix})",
             )
             if not chosen:
@@ -1355,7 +1368,7 @@ class MainWindow(QMainWindow):
         )
         if save_dir is None:
             chosen = QFileDialog.getExistingDirectory(
-                self, "Save the generated code"
+                self, "Save the generated code", str(_documents_dir())
             )
             if not chosen:
                 panel.set_status(
@@ -1387,6 +1400,22 @@ class MainWindow(QMainWindow):
             panel.set_status("OPEN A PROJECT FIRST")
             return None
         assessment = self.current_assessment()
+        # Finding #2 (Stage 0): the sign-off gate is consulted
+        # FIRST -- before codegen and before any dialog. On the
+        # run #7 build the save dialog opened first and the refusal
+        # only arrived after the user picked a file, which read
+        # exactly like the gate letting them through. Unsigned now
+        # refuses immediately and the dialog never opens. (The
+        # safety property itself always held: the write path still
+        # re-checks in delivery.export_signed_package.)
+        try:
+            risk.assert_export_ready(assessment)
+        except risk.ExportBlocked:
+            panel.set_status(
+                "EXPORT REFUSED — A TEACHER MUST SIGN THE RISK "
+                "ASSESSMENT FIRST"
+            )
+            return None
         try:
             bundle = delivery.generate_checked_code(
                 self.current_template_data, self.current_params()
@@ -1401,7 +1430,10 @@ class MainWindow(QMainWindow):
             chosen, _selected = QFileDialog.getSaveFileName(
                 self,
                 "Export signed package",
-                f"{_slugify(self.current_project.title)}.tmachine",
+                str(
+                    _documents_dir()
+                    / f"{_slugify(self.current_project.title)}.tmachine"
+                ),
                 "Machine packages (*.tmachine)",
             )
             if not chosen:
@@ -1447,7 +1479,14 @@ class MainWindow(QMainWindow):
 
     def _sam_model_dir(self) -> Path:
         """Where the click tracker's model files live for this
-        installation: a ``models`` folder beside the projects."""
+        installation: the copy bundled inside the app when one is
+        present (Resource Layer), else a ``models`` folder beside
+        the projects (the repair-download location)."""
+        from .. import resources
+
+        resolved = resources.sam_weights_dir()
+        if resolved is not None:
+            return resolved
         from ..sam_tracker import weights_dir
 
         return weights_dir(self.projects_dir.parent)

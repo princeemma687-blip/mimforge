@@ -202,6 +202,36 @@ def test_self_test_module_list_matches_source_tree():
     )
 
 
+def test_bundled_resources_are_wired_into_the_spec():
+    """Stage 0: the spec must fold the packaging-time ``bundled/``
+    tree into the frozen app as ``mimforge_resources`` -- that is
+    what makes ffmpeg/SAM/Whisper/config travel with the installer
+    instead of being borrowed from the dev machine (findings
+    #5/#6). Removing the block must fail here."""
+    spec = SPEC.read_text(encoding="utf-8")
+    assert "mimforge_resources" in spec
+    assert "_BUNDLED_ROOT" in spec
+    assert "bundled" in spec
+
+
+def test_packaging_fetch_script_carries_the_pins():
+    """The fetch script is the packaging manifest for bundled
+    assets: the LGPL ffmpeg release pin (never a GPL build -- the
+    product is proprietary), the Whisper revision pin, and the
+    SAM publisher table must all be reachable from it."""
+    fetch = ROOT / "setup" / "fetch_bundled_assets.py"
+    assert fetch.is_file()
+    text = fetch.read_text(encoding="utf-8")
+    assert "autobuild-2026-11-26-12-56" in text
+    assert "lgpl" in text
+    assert "win64" in text and "linux64" in text
+    assert "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66" in text  # whisper pin
+    assert "LGPL-3.0" in text  # licence notices staged with the binaries
+    # The build scripts must invoke the fetch step.
+    ps1 = (ROOT / "setup" / "build-windows.ps1").read_text(encoding="utf-8")
+    assert "fetch_bundled_assets.py" in ps1
+
+
 def test_self_test_subprocess_passes():
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")

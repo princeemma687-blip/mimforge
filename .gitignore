@@ -63,6 +63,13 @@ models/
 *.task
 *.tflite
 
+# Stage 0 bundled runtime assets, staged at packaging time by
+# setup/fetch_bundled_assets.py (ffmpeg binaries, model weights,
+# the generated Firebase config resource, licence texts). Produced
+# fresh by every packaging run; never committed.
+bundled/
+bundled-work/
+
 # QNX SDP install + build output (installed locally via QNX Everywhere)
 qnx-sdk/
 qnx-build/

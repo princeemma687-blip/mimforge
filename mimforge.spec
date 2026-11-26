@@ -50,6 +50,27 @@ datas = [
      "assets/branding"),
 ]
 
+# Stage 0 (2026-11-26): the bundled runtime resources staged by
+# setup/fetch_bundled_assets.py into the repo-local bundled/ folder
+# -- ffmpeg/ffprobe (+ shared libraries + LGPL notices), the SAM
+# 2.1 weights, the Whisper base model, the generated Firebase
+# config, and the self-test sample clip. They ship under
+# mimforge_resources/ and mimforge.resources resolves them there.
+# When bundled/ is absent (a source checkout that never ran the
+# fetch step) the app simply reports those features NOT SET UP;
+# the frozen Gate v2 self-test fails such a build on purpose.
+_BUNDLED_ROOT = SPEC_DIR / "bundled"
+if _BUNDLED_ROOT.is_dir():
+    for _res_path in sorted(_BUNDLED_ROOT.rglob("*")):
+        if _res_path.is_file():
+            _res_rel = _res_path.relative_to(_BUNDLED_ROOT)
+            datas.append(
+                (
+                    str(_res_path),
+                    str(Path("mimforge_resources") / _res_rel.parent),
+                )
+            )
+
 binaries = []
 hiddenimports = [
     "mimforge",
@@ -70,10 +91,12 @@ hiddenimports = [
     "mimforge.perception",
     "mimforge.playback",
     "mimforge.projects",
+    "mimforge.resources",
     "mimforge.retarget",
     "mimforge.risk",
     "mimforge.safety",
     "mimforge.sam_tracker",
+    "mimforge.selftest_flows",
     "mimforge.signing",
     "mimforge.simulation",
     "mimforge.structuring",

@@ -21,13 +21,50 @@ for the licence conditions.
 ## Build on Windows (Prince's laptop)
 
 ```powershell
-# 1. Toolchain first (Python 3.12; FFmpeg is a separate manual
-#    install -- see the packaging limits below):
+# 1. Toolchain first (Python 3.12):
 .\setup\windows-toolchain.ps1
 
-# 2. Build + installer (runs the FULL pytest suite as a gate first):
+# 2. Build + installer (stages the bundled runtime assets, runs
+#    the FULL pytest suite as a gate, then the frozen self-test):
 .\setup\build-windows.ps1
 ```
+
+## Stage 0: everything inside the app (2026-11-26)
+
+The installed app carries every runtime asset it needs, staged at
+packaging time by `setup/fetch_bundled_assets.py` into the
+repo-local `bundled/` folder and folded into the bundle by
+`mimforge.spec` under `mimforge_resources/`:
+
+- **ffmpeg + ffprobe** — BtbN `win64-lgpl` **shared** build,
+  release `autobuild-2026-11-26-12-56` pinned by SHA-256
+  (`7c762769…`); LGPL only, never a GPL build (the product is
+  proprietary). `LGPL-3.0.txt` + a source-offer notice ship in
+  `mimforge_resources/licenses/`.
+- **SAM 2.1 weights** (130 MB, publisher hashes) and the
+  **Whisper base model** (~150 MB, pinned revision) — first use
+  needs no download and no network.
+- **Firebase web config** — generated at packaging time from the
+  developer's `.env.local` (or `FIREBASE_*` environment variables
+  in CI) into `bundled/config/firebase_config.json`; the values
+  are never printed by the fetch script, and the generated file
+  is gitignored like `.env.local` itself.
+
+At runtime `mimforge.resources` is the ONLY resolver: bundled →
+per-user data → developer override. No module looks up ffmpeg,
+model weights, or the config on its own.
+
+**Gate v2.** The frozen `--self-test` now runs real-flow probes
+(`mimforge.selftest_flows`) in the frozen build: with the OS PATH
+scrubbed, it probes the bundled sample clip with the bundled
+ffprobe, extracts its audio with the bundled ffmpeg, colour-
+tracks frames, segments a frame with the bundled SAM weights,
+loads the bundled Whisper model, and loads the bundled Firebase
+config — asserting each resource's source is the bundle itself.
+A build whose resources are missing fails HERE, not on a user's
+machine. (In a source checkout the probes run via
+`python -m mimforge --self-test=flows` once the fetch step has
+staged `bundled/`.)
 
 The script stops if tests fail, and stops with instructions (not a
 silent skip) if Inno Setup is not installed.
@@ -68,6 +105,8 @@ The gate, in three layers:
 | Full pytest suite | this VM, 2026-11-25 | pass (count in the progress log) |
 | PyInstaller build from `mimforge.spec` | this VM (Linux smoke build) | binary starts headless offscreen — see below |
 | Clean-room build + frozen `--self-test` | this VM, 2026-11-26 | fresh venv (declared deps only): the pre-fix spec reproduced the laptop's `No module named 'scipy'` crash exactly; the fixed spec's bundle passes `--self-test` (SELF-TEST OK, exit 0) and a plain launch stays running |
+| Gate v2 flow probes (Stage 0) | this VM, 2026-11-26 | `python -m mimforge --self-test=flows` with `bundled/` staged: all 12 probes pass — resources resolve as bundled with PATH scrubbed; bundled ffprobe probes the sample clip, bundled ffmpeg extracts its audio, colour tracking 18/18 examined frames, Whisper base loads from the bundle, SAM segments a frame, Firebase config loads usable |
+| Stage 0 clean-room frozen proof | this VM, 2026-11-26 | clean-room venv rebuilt from declared deps only; frozen build's `--self-test` run with an EMPTY environment (scratch HOME + empty PATH dir, no `.env.local` reachable): all 12 flow probes resolve from `_internal/mimforge_resources`, SELF-TEST OK, exit 0; plain launch stays running |
 | Windows installer build (`iscc`) | **not run here** — Inno Setup is Windows-only | Prince's laptop step |
 | Clean-profile install test: fresh install → open demo project → run simulation → play lesson, no dev tools | **not run here** — needs Windows | Prince's laptop step (the 6.2 test) |
 | SmartScreen | unsigned build — Windows will warn on first run | expected; explain, do not bypass. An Authenticode certificate is a paid convenience, not required |
@@ -94,22 +133,21 @@ the deliverable and is verified on Prince's laptop.
 
 ## Known packaging limits (honest)
 
-- **FFmpeg is not bundled.** Video ingest shells out to a system
-  FFmpeg. Installing FFmpeg is a **manual prerequisite** (the
-  toolchain script deliberately does not install it — see its
-  header); a machine without it gets a plain "the video tools are
-  not available" message from the app, not a crash. A future step
-  may vendor the LGPL FFmpeg binaries into the installer.
 - **No code signing.** The installer is unsigned; SmartScreen will
   warn. A signing certificate costs money and is a convenience
   only — not bought, per the no-money rule.
 - **Lean mode is the default.** The Whisper model is the `base`
-  size and is **not bundled**: it downloads on first transcription
-  (~150 MB, needs a connection once). The SAM 2.1 click tracker's
-  weights are likewise **not bundled**: they download once on
-  first use (~130 MB, needs a connection once, then work offline;
-  see `docs/SBOM.md`). The full profile is a runtime switch, not a
+  size, bundled (see above). The SAM 2.1 first-run download code
+  remains only as a repair path if the bundled weights ever fail
+  their hash check. The full profile is a runtime switch, not a
   second installer.
+- **CI needs the Firebase values once.** The Windows workflow
+  generates the bundled config from repository **Variables**
+  (`FIREBASE_API_KEY` etc. — public identifiers, not secrets).
+  Until they are set, the fetch step stages everything else and
+  warns, and the frozen Gate v2 self-test then fails the build on
+  the missing config — by design, so a config-less installer can
+  never ship silently again (walk finding #5).
 - **QNX evidence is separate.** The QNX C controller (`qnx/`) is
   not inside the Windows installer; its build/run evidence lives
   in the repo and the submission package (see `docs/SUBMISSION.md`).

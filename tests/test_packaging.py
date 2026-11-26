@@ -62,7 +62,11 @@ def test_packaging_doc_records_what_was_verified_where():
     doc = (ROOT / "docs" / "PACKAGING.md").read_text(encoding="utf-8")
     assert "not run here" in doc
     assert "Prince's laptop step" in doc
-    assert "FFmpeg is not bundled" in doc
+    # Stage 0 (2026-11-26) retired the old "FFmpeg is not bundled"
+    # limit: the doc must now record the bundled-assets step and
+    # the Gate v2 frozen self-test instead.
+    assert "setup/fetch_bundled_assets.py" in doc
+    assert "Gate v2" in doc
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows-only check")

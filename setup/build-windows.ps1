@@ -14,12 +14,13 @@
 #      link instead of failing silently -- install Inno Setup 6
 #      (free) and re-run.
 #
-# The script never downloads a paid tool and never touches the
-# network beyond pip / PyInstaller (both free). FFmpeg is NOT bundled
-# by this script and NOT installed by the toolchain script either:
-# the app shells out to a system FFmpeg for video ingest, and
-# installing an LGPL FFmpeg build is a manual prerequisite
-# (see docs/PACKAGING.md).
+# The script never downloads a paid tool. Since Stage 0
+# (2026-11-26) it also stages the bundled runtime assets
+# (setup/fetch_bundled_assets.py): the LGPL FFmpeg tools, the SAM
+# 2.1 weights, the Whisper base model and the generated Firebase
+# config are fetched (free, pinned + hash-verified) into bundled/
+# and folded into the app by mimforge.spec, so the installed app
+# needs nothing from the user's machine.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -36,6 +37,10 @@ Write-Host "Installing app + build tools ..."
 pip install --upgrade pip
 pip install -e .
 pip install pyinstaller pytest
+
+Write-Host "Staging bundled runtime assets (ffmpeg, models, config) ..."
+python setup\fetch_bundled_assets.py --platform win64
+if ($LASTEXITCODE -ne 0) { throw "Bundled-asset staging failed -- build stopped." }
 
 Write-Host "Running FULL test suite (build gate) ..."
 # Same environment the GitHub Actions gate verifies with.

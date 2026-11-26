@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -218,17 +218,73 @@ class ProjectsPanel(QWidget):
         self.host.open_project(saved[row][0])
 
 
+#: How far the drawn mass swings to each side, in degrees. Large
+#: enough to read instantly as a swinging mass, small enough to stay a
+#: teaching-machine diagram (the practical itself uses ~10°).
+SWING_MAX_ANGLE_DEG = 20.0
+
+#: The phase the elevation rests at when motion is reduced: the
+#: mass sits visibly DISPLACED (sin(2*pi*0.125) ~= 0.71 of the swing)
+#: so even the still image reads as a swinging mass, never as a mass
+#: hanging at rest on a vertical line.
+SWING_REST_PHASE = 0.125
+
+
+def swing_mass_position(
+    pivot_x: float,
+    pivot_y: float,
+    length_px: float,
+    phase: float,
+    max_angle_deg: float = SWING_MAX_ANGLE_DEG,
+) -> tuple[float, float]:
+    """The mass's centre for one swing phase in [0, 1).
+
+    The angle follows ``max * sin(2*pi*phase)`` -- a true swinging-mass
+    profile: fastest through the centre, easing to a stop at each
+    extreme. The mass stays exactly ``length_px`` from the pivot
+    for every phase (it swings on its arc; it never slides along
+    the line -- walk finding #1)."""
+    angle = math.radians(max_angle_deg) * math.sin(phase * 2 * math.pi)
+    return (
+        pivot_x + length_px * math.sin(angle),
+        pivot_y + length_px * math.cos(angle),
+    )
+
+
+def swing_arc_points(
+    pivot_x: float,
+    pivot_y: float,
+    length_px: float,
+    max_angle_deg: float = SWING_MAX_ANGLE_DEG,
+    steps: int = 24,
+) -> list[tuple[float, float]]:
+    """Points along the mass's swing arc, extreme to extreme."""
+    amax = math.radians(max_angle_deg)
+    points = []
+    for i in range(steps + 1):
+        angle = -amax + (2 * amax) * i / steps
+        points.append(
+            (
+                pivot_x + length_px * math.sin(angle),
+                pivot_y + length_px * math.cos(angle),
+            )
+        )
+    return points
+
+
 class GantryElevationView(QWidget):
     """The machine drawn as an elevation from its parameters:
-    uprights, top beam, carriage, and the Logo C motif -- a dotted
-    suspension path with a glowing dot that travels it. Vector
-    lines only, drawn fresh from the parameters on every paint."""
+    uprights, top beam, carriage, and the suspended mass drawn
+    DISPLACED on its swing arc (faint arc, rest position marked),
+    with the glowing mass travelling the arc on a true swinging-mass
+    profile. Vector lines only, drawn fresh from the parameters
+    on every paint."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumHeight(190)
         self._params = None
-        self._phase = 0.0
+        self._phase = SWING_REST_PHASE
         self._timer = QTimer(self)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._advance)
@@ -295,19 +351,47 @@ class GantryElevationView(QWidget):
             int(cx - car_w / 2), int(y_top - car_h / 2),
             car_w, car_h, QColor(ACCENT),
         )
-        # Dotted suspension path (the Logo C motif) + travelling dot.
-        path_bottom = y_base - 6
+        # The suspension: pivot under the carriage, the line drawn
+        # at the mass's CURRENT displaced angle, the swing arc
+        # faint behind it, the rest position ticked at the arc's
+        # bottom, and the glowing mass riding the arc (finding #1:
+        # a suspended mass swings -- it never slides up and down
+        # the line).
+        pivot_x, pivot_y = cx, y_top + car_h / 2
+        low_mm, high_mm = params.suspension_range_mm
+        length_px = (low_mm + high_mm) / 2 * scale
+        length_px = min(length_px, max(y_base - pivot_y - 12, 10))
+        arc = swing_arc_points(pivot_x, pivot_y, length_px)
+        arc_path = QPainterPath()
+        arc_path.moveTo(QPointF(*arc[0]))
+        for point in arc[1:]:
+            arc_path.lineTo(QPointF(*point))
+        arc_pen = QPen(QColor(ACCENT))
+        arc_pen.setWidth(1)
+        arc_pen.setStyle(Qt.DashLine)
+        arc_color = QColor(ACCENT)
+        arc_color.setAlpha(90)
+        arc_pen.setColor(arc_color)
+        painter.setPen(arc_pen)
+        painter.drawPath(arc_path)
+        # Rest position: a small tick at the bottom of the arc.
+        rest_x, rest_y = pivot_x, pivot_y + length_px
+        painter.setPen(pen(MUTED, 1))
+        painter.drawLine(
+            int(rest_x) - 5, int(rest_y), int(rest_x) + 5, int(rest_y)
+        )
+        mass_x, mass_y = swing_mass_position(
+            pivot_x, pivot_y, length_px, self._phase
+        )
         painter.setPen(pen(ACCENT, 2, Qt.DotLine))
-        painter.drawLine(int(cx), int(y_top), int(cx), int(path_bottom))
-        travel = (math.sin(self._phase * 2 * math.pi) + 1) / 2
-        dot_y = y_top + travel * (path_bottom - y_top)
+        painter.drawLine(int(pivot_x), int(pivot_y), int(mass_x), int(mass_y))
         glow = QColor(ACCENT)
         glow.setAlpha(70)
         painter.setBrush(glow)
         painter.setPen(Qt.NoPen)
-        painter.drawEllipse(int(cx) - 9, int(dot_y) - 9, 18, 18)
+        painter.drawEllipse(int(mass_x) - 10, int(mass_y) - 10, 20, 20)
         painter.setBrush(QColor(ACCENT))
-        painter.drawEllipse(int(cx) - 4, int(dot_y) - 4, 8, 8)
+        painter.drawEllipse(int(mass_x) - 5, int(mass_y) - 5, 10, 10)
         # Dimension lines: span along the bottom, height at the right.
         painter.setPen(pen(MUTED, 1))
         dim_y = int(y_base) + 22

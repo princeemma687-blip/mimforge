@@ -2,10 +2,12 @@
 
 The sync layer (``mimforge.sync``) ships a backend seam; this module
 is the real backend that plugs into it. It reads the project's web
-configuration from a local ``.env.local`` file (the same values the
-Firebase Console shows under Project settings -- configuration, not
-a password), and talks to Firestore's REST API directly: no SDK, no
-extra dependency, standard library only.
+configuration through the Resource Layer -- the config bundled
+inside the app at packaging time, or a developer's local
+``.env.local`` file (the same values the Firebase Console shows
+under Project settings -- configuration, not a password) -- and
+talks to Firestore's REST API directly: no SDK, no extra
+dependency, standard library only.
 
 Honest limits, by design:
 
@@ -122,8 +124,53 @@ def find_env_file() -> Optional[Path]:
     return None
 
 
+def _load_bundled_config() -> Optional[FirebaseConfig]:
+    """The Firebase web config bundled inside the app (Stage 0).
+
+    The resource is generated at packaging time from the developer's
+    ``.env.local`` (see ``setup/fetch_bundled_assets.py``) and is a
+    JSON object keyed by the ``FirebaseConfig`` field names (the
+    ``FIREBASE_*`` env names are also accepted). A web config is a
+    public project identifier, not a secret -- the per-user
+    Firestore rules are the security -- so it ships in the bundle
+    and a clean install needs no files present."""
+    from . import resources
+
+    resource_path = resources.firebase_config_path()
+    if resource_path is None:
+        return None
+    try:
+        data = json.loads(resource_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    values: dict[str, str] = {}
+    for env_key, field in _FIELD_MAP.items():
+        raw = data.get(field, data.get(env_key, ""))
+        values[field] = raw if isinstance(raw, str) else str(raw)
+    config = FirebaseConfig(**values)
+    return config if config.usable else None
+
+
 def load_firebase_config(path: str | Path | None = None) -> Optional[FirebaseConfig]:
-    """Load the config, or None when no usable config exists."""
+    """Load the config, or None when no usable config exists.
+
+    Order (Stage 0, via the Resource Layer): an explicit ``path``
+    wins; then the ``MIMFORGE_ENV_FILE`` developer override (kept
+    authoritative -- a missing file there means "not set up");
+    then the config BUNDLED inside the app; then a developer
+    ``.env.local`` found by :func:`find_env_file`; otherwise None
+    (the app reports NOT SET UP and works signed out)."""
+    if path is None and os.environ.get(ENV_OVERRIDE):
+        env_path = find_env_file()
+        if env_path is None or not env_path.is_file():
+            return None
+        path = env_path
+    if path is None:
+        bundled = _load_bundled_config()
+        if bundled is not None:
+            return bundled
     env_path = Path(path) if path is not None else find_env_file()
     if env_path is None or not env_path.is_file():
         return None

@@ -15,13 +15,14 @@ proof under ``experiments/`` reuses these exact functions.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
 import numpy as np
+
+from . import resources
 
 
 class IngestError(Exception):
@@ -52,9 +53,10 @@ def probe_video(path: str | Path) -> VideoInfo:
     path = Path(path)
     if not path.is_file():
         raise IngestError(f"video file not found: {path}")
-    ffprobe = shutil.which("ffprobe")
-    if ffprobe is None:
-        raise EngineUnavailable("ffprobe not found on PATH")
+    resolved = resources.ffprobe_path()
+    if resolved is None:
+        raise EngineUnavailable("ffprobe not available (no bundled copy found)")
+    ffprobe = str(resolved)
     try:
         proc = subprocess.run(
             [

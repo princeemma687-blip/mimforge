@@ -13,11 +13,11 @@ on transcription.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import resources
 from .perception import EngineUnavailable
 
 
@@ -61,9 +61,10 @@ def extract_audio(
     video_path, out_path = Path(video_path), Path(out_path)
     if not video_path.is_file():
         raise TranscriptionError(f"video file not found: {video_path}")
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise EngineUnavailable("ffmpeg not found on PATH")
+    resolved = resources.ffmpeg_path()
+    if resolved is None:
+        raise EngineUnavailable("ffmpeg not available (no bundled copy found)")
+    ffmpeg = str(resolved)
     try:
         proc = subprocess.run(
             [
@@ -130,9 +131,17 @@ class WhisperTranscriber:
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise TranscriptionError(f"audio file not found: {audio_path}")
+        # Prefer a local model folder resolved through the
+        # Resource Layer (bundled in a shipped build) over the
+        # bare model name, which faster-whisper would download.
+        model_ref = self.model
+        if not Path(self.model).is_dir():
+            local = resources.whisper_model_dir(self.model)
+            if local is not None:
+                model_ref = str(local)
         try:
             model = WhisperModel(
-                self.model,
+                model_ref,
                 device=self.device,
                 compute_type=self.compute_type,
             )

@@ -182,7 +182,7 @@ compile → QEMU run → timing log), then the Windows installer
 test + demo-video recording on his laptop, then submission
 (Prince registers from 10 Dec; internal submit-by 14 Dec).
 The test suite is the acceptance gate for every phase: `pytest` —
-currently 301 tests passing.
+currently 321 tests passing.
 
 ## Build / run
 
