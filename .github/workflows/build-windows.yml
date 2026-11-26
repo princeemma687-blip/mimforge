@@ -72,6 +72,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
           if (-not (Test-Path "dist\Mimforge\Mimforge.exe")) { throw "Expected dist\Mimforge\Mimforge.exe was not produced." }
 
+      - name: Self-test the frozen app (missing-module gate)
+        shell: pwsh
+        env:
+          # Headless Qt, same as the test gate: the self-test builds
+          # the real main window offscreen and exits.
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # The shipped exe is windowed (no console), so launch it
+          # with Start-Process -Wait and gate on the exit code. The
+          # self-test imports the full module graph and constructs
+          # the main window: a module missing from the bundle (the
+          # 2026-11-26 scipy crash) fails HERE, before packaging,
+          # instead of on the user's laptop.
+          $proc = Start-Process -FilePath "dist\Mimforge\Mimforge.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "Frozen-app self-test failed with exit code $($proc.ExitCode) -- a module is missing from the bundle. Do not package this build." }
+
       - name: Build installer with Inno Setup
         id: inno
         shell: pwsh
