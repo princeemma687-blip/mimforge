@@ -53,6 +53,9 @@ def _window(tmp_path, **kwargs) -> MainWindow:
 
 def _create_via_clicks(window: MainWindow, title: str = "Pendulum Class"):
     panel = window.projects_panel
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText(title)
     panel.create_button.click()
     assert window.current_project is not None
@@ -389,7 +392,9 @@ def test_import_builds_a_draft_from_the_recording(
     window.author_panel.import_button.click()
     status = window.author_panel.import_status_label.text()
     assert "DEMONSTRATION IMPORTED" in status
-    assert "FOUND IN" in status  # the tracked object was found
+    # The tracking note is the coverage report in plain words
+    # (2026-11-26 honesty layer): a clean track says so directly.
+    assert "FOLLOWED DIRECTLY" in status
     draft = window.author_panel.current_draft()
     assert draft is not None
     assert draft.transcript_engine == "stub"

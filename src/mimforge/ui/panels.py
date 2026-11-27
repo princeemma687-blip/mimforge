@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPlainTextEdit,
     QPushButton,
+    QStackedLayout,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from .drawings import PanelLayoutView, WiringView
 from .main_window import (
     ACCENT,
     MUTED,
@@ -73,7 +75,7 @@ class ProjectsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(_plate("PROJECTS"))
 
-        layout.addWidget(_caption("NEW PROJECT — FROM A TEMPLATE"))
+        layout.addWidget(_caption("NEW PROJECT — FROM THE PRACTICAL LIBRARY"))
         self.template_combo = QComboBox()
         self.template_combo.setFont(mono_font(10))
         self.template_combo.currentIndexChanged.connect(
@@ -162,16 +164,23 @@ class ProjectsPanel(QWidget):
         current = self.template_combo.currentData()
         self.template_combo.blockSignals(True)
         self.template_combo.clear()
+        # The library is a set of equals: the picker opens on a
+        # neutral prompt, never on one practical pre-selected as
+        # the app's face (Prince's no-single-practical-preview
+        # rule). A project is created only from an explicit choice.
+        self.template_combo.addItem("— CHOOSE A PRACTICAL —", None)
         for entry in self.host.available_templates():
             label = entry["title"]
             if entry["subject"]:
                 label += f"  —  {entry['subject']}"
             self.template_combo.addItem(label, entry["name"])
         self.template_combo.blockSignals(False)
-        if current is not None:
-            index = self.template_combo.findData(current)
-            if index >= 0:
-                self.template_combo.setCurrentIndex(index)
+        index = (
+            self.template_combo.findData(current)
+            if current is not None
+            else 0
+        )
+        self.template_combo.setCurrentIndex(max(index, 0))
         self._on_template_changed()
 
     def refresh_projects(self) -> None:
@@ -193,6 +202,11 @@ class ProjectsPanel(QWidget):
 
     def _on_template_changed(self) -> None:
         name = self.template_combo.currentData()
+        if name is None:
+            # The neutral prompt is showing: no practical chosen,
+            # so no practical's title fills the title box either.
+            self.title_edit.setText("")
+            return
         for entry in self.host.available_templates():
             if entry["name"] == name:
                 self.title_edit.setText(entry["title"])
@@ -201,7 +215,9 @@ class ProjectsPanel(QWidget):
     def _on_create(self) -> None:
         name = self.template_combo.currentData()
         if name is None:
-            self.status_label.setText("STATUS: NO TEMPLATE AVAILABLE")
+            self.status_label.setText(
+                "STATUS: CHOOSE A PRACTICAL FROM THE LIBRARY FIRST"
+            )
             return
         title = self.title_edit.text().strip()
         if not title:
@@ -434,8 +450,45 @@ class DesignPanel(QWidget):
         layout.addWidget(_plate("DESIGN — MACHINE + BOM"))
         self.project_label = _status("PROJECT: —")
         layout.addWidget(self.project_label)
+        # Stage 3: the design shown three ways -- the elevation,
+        # the wiring schematic and the control-panel face, all
+        # generated from the same design data.
+        view_row = QHBoxLayout()
+        self.view_buttons: dict[str, QPushButton] = {}
+        for key, text in (
+            ("elevation", "ELEVATION"),
+            ("wiring", "WIRING"),
+            ("panel", "PANEL"),
+        ):
+            button = QPushButton(text)
+            button.setFont(mono_font(10, bold=True))
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda _=False, k=key: self._set_view(k)
+            )
+            self.view_buttons[key] = button
+            view_row.addWidget(button)
+        view_row.addStretch(1)
+        layout.addLayout(view_row)
+        self.views = QStackedLayout()
         self.elevation = GantryElevationView()
-        layout.addWidget(self.elevation)
+        self.wiring_view = WiringView()
+        self.panel_view = PanelLayoutView()
+        self.views.addWidget(self.elevation)
+        self.views.addWidget(self.wiring_view)
+        self.views.addWidget(self.panel_view)
+        layout.addLayout(self.views)
+        self.view_buttons["elevation"].setChecked(True)
+        self.build_it_button = QPushButton(
+            "▶  BUILD IT — STEP-BY-STEP COUPLING"
+        )
+        self.build_it_button.setFont(mono_font(11, bold=True))
+        self.build_it_button.clicked.connect(
+            lambda: self.host.show_assembly()
+            if self.host is not None
+            else None
+        )
+        layout.addWidget(self.build_it_button)
         self.readout = QPlainTextEdit()
         self.readout.setFont(mono_font(10))
         self.readout.setReadOnly(True)
@@ -504,6 +557,41 @@ class DesignPanel(QWidget):
     def set_status(self, text: str) -> None:
         self.status_label.setText(f"STATUS: {text}")
 
+    # ---------------------------------------------------- design views
+
+    @property
+    def current_view(self) -> str:
+        return ("elevation", "wiring", "panel")[self.views.currentIndex()]
+
+    def _set_view(self, key: str) -> None:
+        index = {"elevation": 0, "wiring": 1, "panel": 2}[key]
+        self.views.setCurrentIndex(index)
+        for name, button in self.view_buttons.items():
+            button.setChecked(name == key)
+        if key in ("wiring", "panel"):
+            self._refresh_drawings()
+
+    def _refresh_drawings(self) -> None:
+        """Feed the wiring + panel views from the host's generated
+        drawings for the selected tier (a stub host in a test may
+        not offer them -- the views then keep their placeholder)."""
+        host = self.host
+        if host is None:
+            return
+        tier = self.tier_combo.currentData() or "prototype"
+        getter = getattr(host, "current_wiring_diagram", None)
+        if callable(getter):
+            try:
+                self.wiring_view.set_diagram(getter(tier))
+            except Exception:
+                pass
+        getter = getattr(host, "current_panel_layout", None)
+        if callable(getter):
+            try:
+                self.panel_view.set_layout(getter())
+            except Exception:
+                pass
+
     def show_design(self, project_title: str | None, params, tier_boms) -> None:
         """Show one machine: its parameters, the tier totals, and
         the full itemised materials of the selected tier.
@@ -551,6 +639,7 @@ class DesignPanel(QWidget):
             if index >= 0:
                 self.tier_combo.setCurrentIndex(index)
         self._render_materials()
+        self._refresh_drawings()
 
     def _render_materials(self) -> None:
         """Fill the materials table with the selected tier's BOM
@@ -585,6 +674,9 @@ class DesignPanel(QWidget):
         total.setFont(mono_font(10, bold=True))
         total.setTextAlignment(right)
         table.setItem(foot, 3, total)
+        # The wiring schematic names the tier's own parts, so a
+        # tier switch re-draws it too.
+        self._refresh_drawings()
 
 
 class FitGraphView(QWidget):

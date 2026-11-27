@@ -1,0 +1,325 @@
+{
+  "synthetic": true,
+  "entries": [
+    {
+      "template": "hooke",
+      "title": "Hooke's law: determination of the spring constant from extension and load",
+      "ground_truth": {
+        "spring_constant_N_per_m": 25.0
+      },
+      "worked_table_recovered": 25.09,
+      "measured_rows": [
+        {
+          "mass_g": 100,
+          "load_N": 0.981,
+          "extension_cm": 3.9,
+          "extension_m": 0.039
+        },
+        {
+          "mass_g": 200,
+          "load_N": 1.962,
+          "extension_cm": 7.9,
+          "extension_m": 0.079
+        },
+        {
+          "mass_g": 300,
+          "load_N": 2.943,
+          "extension_cm": 11.7,
+          "extension_m": 0.117
+        },
+        {
+          "mass_g": 400,
+          "load_N": 3.924,
+          "extension_cm": 15.7,
+          "extension_m": 0.157
+        },
+        {
+          "mass_g": 500,
+          "load_N": 4.905,
+          "extension_cm": 19.7,
+          "extension_m": 0.197
+        }
+      ],
+      "measured_recovered": 24.898,
+      "error_percent_vs_truth": -0.41,
+      "band_percent": 5.0,
+      "verification_passed": true,
+      "verification_findings": [],
+      "tracker": {
+        "stride": 5,
+        "per_clip": [
+          {
+            "file": "hooke_000g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "hooke_100g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "hooke_200g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "hooke_300g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "hooke_400g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "hooke_500g.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 21,
+            "frames_measured": 21,
+            "summary": "The object was followed directly for the whole recording."
+          }
+        ],
+        "min_measured_coverage": 1.0,
+        "mean_measured_coverage": 1.0
+      },
+      "design": {
+        "platform_id": "bench_gantry",
+        "design_parts": 9,
+        "bom_totals_ngn": {
+          "prototype": 69500.0,
+          "professional": 159000.0,
+          "industrial": 359500.0
+        },
+        "panel_controls": 6,
+        "panel_control_ids": [
+          "stop",
+          "load_selector",
+          "apply_load",
+          "extension_reading",
+          "readings_table",
+          "graph"
+        ],
+        "panel_code_chars": 3478
+      }
+    },
+    {
+      "template": "moments",
+      "title": "Principle of moments: mass of an object from a balanced metre rule",
+      "ground_truth": {
+        "unknown_mass_g": 80.0
+      },
+      "worked_table_recovered": 80.16,
+      "measured_rows": [
+        {
+          "known_mass_g": 100,
+          "a_cm": 12.0,
+          "b_cm": 15.0
+        },
+        {
+          "known_mass_g": 100,
+          "a_cm": 16.0,
+          "b_cm": 20.0
+        },
+        {
+          "known_mass_g": 100,
+          "a_cm": 20.0,
+          "b_cm": 25.0
+        },
+        {
+          "known_mass_g": 100,
+          "a_cm": 24.0,
+          "b_cm": 30.0
+        },
+        {
+          "known_mass_g": 100,
+          "a_cm": 28.0,
+          "b_cm": 35.0
+        }
+      ],
+      "measured_recovered": 80.0,
+      "error_percent_vs_truth": -0.0,
+      "band_percent": 5.0,
+      "verification_passed": true,
+      "verification_findings": [],
+      "tracker": {
+        "stride": 5,
+        "per_clip": [
+          {
+            "file": "moments_a12.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 18,
+            "frames_measured": 18,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "moments_a16.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 18,
+            "frames_measured": 18,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "moments_a20.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 18,
+            "frames_measured": 18,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "moments_a24.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 18,
+            "frames_measured": 18,
+            "summary": "The object was followed directly for the whole recording."
+          },
+          {
+            "file": "moments_a28.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 18,
+            "frames_measured": 18,
+            "summary": "The object was followed directly for the whole recording."
+          }
+        ],
+        "min_measured_coverage": 1.0,
+        "mean_measured_coverage": 1.0
+      },
+      "design": {
+        "platform_id": "bench_gantry",
+        "design_parts": 9,
+        "bom_totals_ngn": {
+          "prototype": 69500.0,
+          "professional": 159000.0,
+          "industrial": 359500.0
+        },
+        "panel_controls": 6,
+        "panel_control_ids": [
+          "stop",
+          "mass_position_control",
+          "slide_to_balance",
+          "tilt_reading",
+          "readings_table",
+          "graph"
+        ],
+        "panel_code_chars": 3281
+      }
+    },
+    {
+      "template": "pendulum",
+      "title": "Simple pendulum: determination of g from period and length",
+      "ground_truth": {
+        "g_m_per_s2": 9.81
+      },
+      "worked_table_recovered": 9.821,
+      "measured_rows": [
+        {
+          "L_cm": 90.0,
+          "L_m": 0.9,
+          "t1_s": 38.1,
+          "t2_s": 38.1,
+          "mean_t_s": 38.1,
+          "T_s": 1.91,
+          "T2_s2": 3.63
+        },
+        {
+          "L_cm": 80.0,
+          "L_m": 0.8,
+          "t1_s": 35.9,
+          "t2_s": 35.9,
+          "mean_t_s": 35.9,
+          "T_s": 1.8,
+          "T2_s2": 3.23
+        },
+        {
+          "L_cm": 70.0,
+          "L_m": 0.7,
+          "t1_s": 33.6,
+          "t2_s": 33.6,
+          "mean_t_s": 33.6,
+          "T_s": 1.68,
+          "T2_s2": 2.82
+        },
+        {
+          "L_cm": 60.0,
+          "L_m": 0.6,
+          "t1_s": 31.1,
+          "t2_s": 31.1,
+          "mean_t_s": 31.1,
+          "T_s": 1.56,
+          "T2_s2": 2.42
+        },
+        {
+          "L_cm": 50.0,
+          "L_m": 0.5,
+          "t1_s": 28.4,
+          "t2_s": 28.4,
+          "mean_t_s": 28.4,
+          "T_s": 1.42,
+          "T2_s2": 2.02
+        }
+      ],
+      "measured_recovered": 9.796,
+      "error_percent_vs_truth": -0.14,
+      "band_percent": 5.0,
+      "verification_passed": true,
+      "verification_findings": [],
+      "tracker": {
+        "stride": 5,
+        "per_clip": [
+          {
+            "file": "demo_L090cm.mp4",
+            "measured_coverage": 1.0,
+            "coverage_incl_bridged": 1.0,
+            "frames_examined": 132,
+            "frames_measured": 132,
+            "summary": "The object was followed directly for the whole recording."
+          }
+        ],
+        "min_measured_coverage": 1.0,
+        "mean_measured_coverage": 1.0,
+        "note": "coverage measured on the 90 cm clip with the improved tracker; the recovered value comes from the standing proof's own extraction over all five lengths"
+      },
+      "design": {
+        "platform_id": "bench_gantry",
+        "design_parts": 9,
+        "bom_totals_ngn": {
+          "prototype": 69500.0,
+          "professional": 159000.0,
+          "industrial": 359500.0
+        },
+        "panel_controls": 6,
+        "panel_control_ids": [
+          "stop",
+          "length_selector",
+          "release",
+          "live_count/time",
+          "readings_table",
+          "graph"
+        ],
+        "panel_code_chars": 3687
+      }
+    }
+  ]
+}

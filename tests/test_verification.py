@@ -23,8 +23,8 @@ def _conical_track(points: int = 240) -> dict:
 
 
 def test_shape_checks_use_the_recorded_demonstration():
-    template = load_template()
-    data = load_template_data()
+    template = load_template("pendulum")
+    data = load_template_data("pendulum")
     outcome = run_verification(
         template, data, teacher_track=_conical_track()
     )
@@ -34,8 +34,8 @@ def test_shape_checks_use_the_recorded_demonstration():
 
 
 def test_without_a_demonstration_the_basis_is_simulation():
-    template = load_template()
-    data = load_template_data()
+    template = load_template("pendulum")
+    data = load_template_data("pendulum")
     outcome = run_verification(template, data)
     assert outcome.track_basis == "simulation"
     # The simulated clean arc does not flag itself.

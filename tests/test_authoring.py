@@ -25,7 +25,7 @@ def app():
 
 
 def _draft():
-    template = load_template()
+    template = load_template("pendulum")
     entries = []
     t = 0.0
     for step in sorted(template.steps, key=lambda s: s.order):

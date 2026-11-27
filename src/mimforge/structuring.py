@@ -276,11 +276,17 @@ def segment_transcript(
     return drafts, unassigned
 
 
+def _mmss(seconds: float) -> str:
+    total = int(round(seconds))
+    return f"{total // 60}:{total % 60:02d}"
+
+
 def build_draft(
     template: PracticalTemplate,
     transcript: Transcript,
     advisor: Advisor | None = None,
     track_coverage: float | None = None,
+    track_report: dict | None = None,
 ) -> AuthoringDraft:
     """Build the full authoring draft for one demonstration."""
     advisor = advisor or OfflineAdvisor()
@@ -314,6 +320,27 @@ def build_draft(
             "examined frames is below the 98% target -- check the "
             "footage for occlusions"
         )
+    if track_report:
+        # The honesty layer reaches the draft: a part of the
+        # demonstration that could not be tracked is named here, so
+        # the steps built from that moment are known to rest on the
+        # narration alone -- never silently complete.
+        spans = track_report.get("spans", [])
+        for span in spans:
+            if span.get("kind") == "failed":
+                warnings.append(
+                    "part of the demonstration could not be tracked "
+                    f"({_mmss(span['start_s'])}-{_mmss(span['end_s'])}): "
+                    f"{span.get('reason', '')} -- steps from that "
+                    "moment rest on the narration alone"
+                )
+        bridged = [s for s in spans if s.get("kind") == "bridged"]
+        if bridged:
+            warnings.append(
+                f"{len(bridged)} short part(s) of the motion were "
+                "bridged across brief losses and are marked as "
+                "bridged in the saved record"
+            )
     return AuthoringDraft(
         template_id=template.id,
         practical_title=template.practical.title,

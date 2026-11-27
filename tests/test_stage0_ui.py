@@ -51,6 +51,9 @@ def _window(tmp_path) -> MainWindow:
 
 def _create_via_clicks(window: MainWindow):
     panel = window.projects_panel
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText("Pendulum Class")
     panel.create_button.click()
     assert window.current_project is not None

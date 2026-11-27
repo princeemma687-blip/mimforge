@@ -29,8 +29,13 @@ from ..models import (
 _HERE = Path(__file__).parent
 
 
-def load_template_data(name: str = "pendulum") -> dict[str, Any]:
-    """Load a template's raw JSON data by name."""
+def load_template_data(name: str) -> dict[str, Any]:
+    """Load a template's raw JSON data by name.
+
+    The name is REQUIRED: there is no default practical. A caller
+    that wants a template must say which one -- the library is a
+    set of equals, and a silent default would make one practical
+    the app's face (Prince's no-single-practical-preview rule)."""
     path = _HERE / f"{name}.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -126,7 +131,8 @@ def template_from_data(data: dict[str, Any]) -> PracticalTemplate:
     )
 
 
-def load_template(name: str = "pendulum") -> PracticalTemplate:
+def load_template(name: str) -> PracticalTemplate:
+    """Load one library template by name (explicit -- no default)."""
     return template_from_data(load_template_data(name))
 
 

@@ -20,7 +20,7 @@ from mimforge.templates import load_template
 
 def _template_transcript():
     """A narration that says each template step in order, 10 s apart."""
-    template = load_template()
+    template = load_template("pendulum")
     entries = []
     t = 0.0
     for step in sorted(template.steps, key=lambda s: s.order):
@@ -166,7 +166,7 @@ def test_advisor_receives_the_teachers_spoken_words():
         ],
         engine="test",
     )
-    template = load_template()
+    template = load_template("pendulum")
     build_draft(template, transcript, advisor=_Capture())
     first_step = template.steps[0].id
     assert "clamp the thread" in captured[first_step]["spoken"]

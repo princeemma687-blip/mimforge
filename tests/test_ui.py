@@ -25,7 +25,11 @@ def test_window_builds_with_all_sections(app):
     window = MainWindow()
     assert "MIMFORGE" in window.windowTitle()
     assert window.nav.count() == len(SECTIONS) == 7
-    assert window.stack.count() == 7
+    # Stage 3: the stack carries one guest page beyond the seven
+    # sections -- the BUILD IT assembly player, reached from
+    # Design, never from the nav.
+    assert window.stack.count() == len(SECTIONS) + 1
+    assert window.stack.widget(len(SECTIONS)) is window.assembly_panel
     assert window.current_section() == "Projects"
     window.nav.setCurrentRow(4)
     assert window.current_section() == "Safety"

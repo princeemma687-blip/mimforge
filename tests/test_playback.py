@@ -47,8 +47,8 @@ def _demo_lesson() -> LessonPackage:
     """The first demonstration's lesson, built through the real
     pipeline: table + fit from the readings, replay from the MuJoCo
     (or RK4 fallback) simulation of the gantry."""
-    template = load_template()
-    data = load_template_data()
+    template = load_template("pendulum")
+    data = load_template_data("pendulum")
     spec = data["observation_spec"]
     columns = [
         {"key": c["key"], "label": c["label"], "unit": c.get("unit", "")}
@@ -176,7 +176,7 @@ def test_validation_rejects_bad_packages():
 
 
 def test_minimal_lesson_without_table_graph_or_replay():
-    template = load_template()
+    template = load_template("pendulum")
     lesson = build_lesson(template)
     assert lesson.step_count == 9
     assert lesson.table is None and lesson.graph is None
@@ -216,7 +216,7 @@ def test_html_export_is_self_contained_and_complete(lesson, tmp_path):
 
 
 def test_html_export_minimal_lesson(tmp_path):
-    lesson = build_lesson(load_template())
+    lesson = build_lesson(load_template("pendulum"))
     path = export_html_lesson(lesson, tmp_path / "minimal.html")
     text = path.read_text(encoding="utf-8")
     assert "NO LESSON" not in text

@@ -27,6 +27,9 @@ def app():
 def _create_via_clicks(window: MainWindow, title: str = "My first lesson"):
     panel = window.projects_panel
     assert panel.template_combo.count() >= 1
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText(title)
     panel.create_button.click()
     return window.current_project

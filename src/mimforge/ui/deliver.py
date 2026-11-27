@@ -85,6 +85,14 @@ class DeliverPanel(QWidget):
             lambda: self.host.export_package()
         )
         layout.addWidget(self.export_button)
+        self.production_button = QPushButton(
+            "⬆  EXPORT PRODUCTION DOCUMENT"
+        )
+        self.production_button.setFont(mono_font(11, bold=True))
+        self.production_button.clicked.connect(
+            lambda: self.host.export_production_document()
+        )
+        layout.addWidget(self.production_button)
 
         layout.addWidget(
             _caption("CONTROLLER CODE — CHECKED BEFORE IT IS SAVED")

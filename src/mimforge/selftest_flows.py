@@ -91,6 +91,75 @@ def _check_source(
     return True
 
 
+def _occlusion_probe(clip, tmp: str, info) -> tuple[bool, str]:
+    """The improved tracker's Gate v2 proof: paint over the sample
+    clip's disc for ~0.5 s mid-clip (at its own tracked positions,
+    so the occlusion is exact), re-track the painted copy, and
+    require the loss to come back BRIDGED -- points present, marked
+    bridged, and named in the coverage report. A tracker that drops
+    the span silently, or invents it as measured, fails this probe.
+    """
+    import cv2
+
+    from .perception import (
+        ColourPrompt,
+        coverage_report,
+        iter_frames,
+        track_object,
+    )
+
+    prompt = ColourPrompt(**_SAMPLE_PROMPT)
+    base = track_object(clip, prompt, stride=1)
+    if base.frames_tracked < 0.9 * base.frames_total:
+        return (
+            False,
+            f"base track too weak ({base.frames_tracked}/{base.frames_total})",
+        )
+    centres = {
+        int(round(t * base.fps)): (x, y)
+        for t, x, y in zip(base.times, base.xs, base.ys)
+    }
+    total = base.frames_total
+    lo, hi = int(0.40 * total), int(0.55 * total)
+    out = Path(tmp) / "occluded.mp4"
+    writer = cv2.VideoWriter(
+        str(out),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        base.fps,
+        (info.width, info.height),
+    )
+    if not writer.isOpened():
+        return False, "could not write the occluded variant"
+    for index, _t, frame in iter_frames(clip, stride=1):
+        if lo <= index <= hi and index in centres:
+            cx, cy = centres[index]
+            cv2.circle(frame, (int(cx), int(cy)), 34, (24, 20, 16), -1)
+        writer.write(frame)
+    writer.release()
+    track = track_object(out, prompt, stride=1)
+    report = coverage_report(track)
+    points = {
+        int(round(t * track.fps)): bool(b)
+        for t, b in zip(track.times, track.bridged)
+    }
+    mid = (lo + hi) // 2
+    bridged_span = any(
+        s["kind"] == "bridged" and s["start_frame"] <= mid <= s["end_frame"]
+        for s in report["spans"]
+    )
+    ok = (
+        bridged_span
+        and points.get(mid) is True
+        and report["frames_bridged"] > 0
+        and track.coverage >= 0.95
+    )
+    return ok, (
+        f"occluded frames {lo}-{hi}: coverage {track.coverage:.2f}, "
+        f"bridged {report['frames_bridged']} frames, "
+        f"mid-occlusion point marked bridged: {points.get(mid)}"
+    )
+
+
 def _run(results, resources, require_bundled: bool) -> None:
     # -- resolution: every registered resource, bundled-sourced.
     ffprobe = resources.ffprobe_path()
@@ -172,6 +241,19 @@ def _run(results, resources, require_bundled: bool) -> None:
             )
             return
 
+        # -- colour-track through an artificial occlusion: the
+        #    improved tracker must bridge it and SAY so.
+        try:
+            ok, detail = _occlusion_probe(clip, tmp, info)
+            results.append(("colour-track occlusion bridge", ok, detail))
+            if not ok:
+                return
+        except Exception as exc:  # noqa: BLE001
+            results.append(
+                ("colour-track occlusion bridge", False, f"{type(exc).__name__}: {exc}")
+            )
+            return
+
         # -- load the bundled Whisper model and run it on the tone
         #    (a tone carries no speech: success = it runs clean).
         try:
@@ -238,6 +320,8 @@ def _run(results, resources, require_bundled: bool) -> None:
 
     _probe_machine_view(results)
     _probe_narration(results)
+    _probe_assembly(results)
+    _probe_library(results)
 
 
 def _probe_narration(results) -> None:
@@ -392,6 +476,245 @@ def _probe_machine_view(results) -> None:
     except Exception as exc:  # noqa: BLE001
         results.append(
             ("machine view render", False, f"{type(exc).__name__}: {exc}")
+        )
+
+
+def _probe_assembly(results) -> None:
+    """Stage 3 Gate v2 probes: the coupling sequence, the wiring
+    and panel generators, the assembly player, and the production
+    dossier -- exercised in this scrubbed environment. The plan
+    must generate buildable steps priced from the parts database;
+    the dossier gate must refuse an unsigned assessment before
+    writing anything, and a signed export must carry every
+    section. All data here is platform data (default design,
+    default parts DB, an empty template) -- the probes prove the
+    generators, not any one practical."""
+    from .design import GantryParameters
+
+    params = GantryParameters()
+    try:
+        from .assembly import build_assembly_plan
+
+        plan = build_assembly_plan(params, "prototype")
+        ids = [step.part_id for step in plan.steps]
+        ok = (
+            len(plan.steps) == 9
+            and len(set(ids)) == 9
+            and plan.total_ngn > 0
+            and all(step.bom_lines for step in plan.steps)
+        )
+        results.append(
+            (
+                "assembly sequence",
+                ok,
+                f"{len(plan.steps)} steps, each part once, "
+                f"build total NGN {plan.total_ngn:,.0f}",
+            )
+        )
+        if not ok:
+            return
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            ("assembly sequence", False, f"{type(exc).__name__}: {exc}")
+        )
+        return
+
+    try:
+        from .bom import PartsDB, generate_bom
+        from .design import build_gantry
+        from .wiring import build_panel_layout, build_wiring_diagram
+
+        db = PartsDB()
+        bom = generate_bom(db, "prototype", build_gantry(params).part_ids)
+        diagram = build_wiring_diagram(params, bom, db=db)
+        roles = {node.role for node in diagram.nodes}
+        runs_ok = all(
+            run.from_role in roles and run.to_role in roles
+            for run in diagram.runs
+        )
+        layout = build_panel_layout({})
+        has_stop = any(c.kind == "estop" for c in layout.controls)
+        ok = runs_ok and has_stop and len(diagram.nodes) >= 8
+        results.append(
+            (
+                "wiring + panel generation",
+                ok,
+                f"{len(diagram.nodes)} nodes, {len(diagram.runs)} runs "
+                f"(all endpoints exist: {runs_ok}); "
+                f"panel controls {len(layout.controls)}, stop present: "
+                f"{has_stop}",
+            )
+        )
+        if not ok:
+            return
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            (
+                "wiring + panel generation",
+                False,
+                f"{type(exc).__name__}: {exc}",
+            )
+        )
+        return
+
+    # The player must construct and advance (the frozen window
+    # exists by the time the probes run in the self-test).
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is not None:
+            from .ui.assembly import AssemblyPlayer
+
+            player = AssemblyPlayer()
+            player.set_plan(plan)
+            player.advance()
+            player.advance()
+            ok = (
+                player.current_index == 2
+                and player.canvas.progress == 1.0
+                and player.card_title.text().startswith("STEP 03/")
+            )
+            results.append(
+                (
+                    "assembly player advance",
+                    ok,
+                    f"index={player.current_index}, "
+                    f"card={player.card_title.text()!r}",
+                )
+            )
+            player.close()
+            if not ok:
+                return
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            (
+                "assembly player advance",
+                False,
+                f"{type(exc).__name__}: {exc}",
+            )
+        )
+        return
+
+    # The dossier: gate first (unsigned refuses, nothing is
+    # written), then a signed export carrying every section, with
+    # the machine images produced by the real image path.
+    try:
+        import tempfile
+        from pathlib import Path
+
+        from . import dossier, risk
+        from .bom import TIERS
+        from .delivery import build_assessment, generate_checked_code
+        from .design import build_gantry as _build
+
+        db = PartsDB()
+        part_ids = _build(params).part_ids
+        tier_boms = {
+            tier: generate_bom(db, tier, part_ids) for tier in TIERS
+        }
+        code = generate_checked_code({}, params)
+        images = dossier.machine_image_data_uris(params)
+        images_ok = all(
+            key in images for key in ("front", "side", "top", "internals")
+        )
+        assessment = build_assessment({})
+        kwargs = dict(
+            project_title="Probe",
+            template_data={},
+            params=params,
+            tier_boms=tier_boms,
+            code=code,
+            images=images,
+        )
+        with tempfile.TemporaryDirectory(prefix="mimforge-dossier-") as tmp:
+            target = Path(tmp) / "production.html"
+            refused = False
+            try:
+                dossier.export_production_document(
+                    out_path=target, assessment=assessment, **kwargs
+                )
+            except risk.ExportBlocked:
+                refused = not target.exists()
+            risk.sign(assessment, "Self Test")
+            out = dossier.export_production_document(
+                out_path=target, assessment=assessment, **kwargs
+            )
+            text = out.read_text(encoding="utf-8")
+            markers = (
+                "THE MACHINE", "WHAT IT DOES", "COUPLING", "WIRING",
+                "CONTROL PANEL", "MATERIALS", "SAFETY",
+                "CONTROLLER CODE",
+            )
+            sections = all(marker in text for marker in markers)
+            ok = refused and sections and images_ok
+            results.append(
+                (
+                    "production dossier export",
+                    ok,
+                    f"unsigned refused (nothing written): {refused}; "
+                    f"all sections present: {sections}; "
+                    f"machine images: {images_ok}; "
+                    f"{out.stat().st_size} bytes",
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            (
+                "production dossier export",
+                False,
+                f"{type(exc).__name__}: {exc}",
+            )
+        )
+
+
+def _probe_library(results) -> None:
+    """Practicals library Gate v2 probe: the bundle must carry the
+    WHOLE template library as data (a bundle that silently dropped
+    a template file would shrink the library on the user's machine
+    and nothing else would notice). Every registered template must
+    load from its bundled data; every template whose data declares
+    the static verification shape must verify through it, from the
+    bundled data alone. Generic by construction: the probe reads
+    the registry and the templates' own declarations -- it names
+    no practical."""
+    try:
+        from .templates import (
+            list_templates,
+            load_template,
+            load_template_data,
+        )
+        from .verification import run_verification
+
+        entries = list_templates()
+        names = sorted(e["name"] for e in entries)
+        ok = len(entries) >= 3
+        detail = f"{len(entries)} templates in bundle: {', '.join(names)}"
+        static_passed = 0
+        for entry in entries:
+            data = load_template_data(entry["name"])
+            spec = data.get("observation_spec") or {}
+            if not spec.get("rows"):
+                ok = False
+                detail += f"; {entry['name']} carries no readings table"
+                continue
+            if spec.get("verification_mode") == "static_fit":
+                outcome = run_verification(
+                    load_template(entry["name"]), data
+                )
+                if outcome.passed and outcome.engine == "static-fit":
+                    static_passed += 1
+                else:
+                    ok = False
+                    detail += (
+                        f"; {entry['name']} static verification failed"
+                    )
+        detail += f"; static-shape templates verified: {static_passed}"
+        if static_passed < 1:
+            ok = False
+        results.append(("practicals library", ok, detail))
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            ("practicals library", False, f"{type(exc).__name__}: {exc}")
         )
 
 

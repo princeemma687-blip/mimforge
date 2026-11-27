@@ -116,7 +116,7 @@ class _FakeEngine:
 
 def test_build_lesson_carries_teacher_and_ai_voices(app, tmp_path, monkeypatch):
     window = MainWindow(projects_dir=tmp_path / "projects")
-    template = load_template()
+    template = load_template("pendulum")
     window.current_template = template
     draft = _draft(orders=(1, 2))
     draft.steps[0].voice_audio = StepAudio.teacher(_tiny_wav(0.8)).to_dict()

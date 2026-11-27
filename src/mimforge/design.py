@@ -148,6 +148,119 @@ def build_gantry(params: GantryParameters) -> GantryDesign:
     )
 
 
+# ------------------------------------------------------- assembly table
+
+
+@dataclass(frozen=True)
+class AssemblyEntry:
+    """One row of the platform assembly table (plan, Stage 3).
+
+    The assembly sequence is platform data, like the geometry:
+    it says, for one designed part, when it is fitted (``order``),
+    how it travels into place (``approach`` -- a key the views
+    animate: ``lower`` from above, ``slide`` along the beam,
+    ``side`` in from its own side, ``rise`` from below), what must
+    already be in place before it can be fitted (``requires`` --
+    the sequence is buildable by construction, and the assembly
+    engine proves it), and what fastens it (``fastener_bom_ids``
+    are lines of the parts database, ``fastener_count`` is how
+    many pieces of the fasteners kit this step uses). ``action``
+    is the step's instruction wording -- teacher-editable text,
+    like every step the app generates.
+    """
+
+    part_id: str
+    order: int
+    approach: str
+    action: str
+    requires: tuple[str, ...] = ()
+    fastener_bom_ids: tuple[str, ...] = ()
+    fastener_count: int = 0
+
+
+#: Approach keys the assembly views know how to animate, with the
+#: plain-words form the step card and the narration use.
+APPROACH_TEXT: dict[str, str] = {
+    "lower": "lowered from above",
+    "slide": "slid along the beam",
+    "side": "offered in from the side",
+    "rise": "lifted in from below",
+}
+
+#: The bench-gantry assembly sequence: feet first (the machine
+#: stands on them), uprights onto the feet, the beam across the
+#: uprights, then everything the beam carries, in the order a
+#: builder actually works. Nine rows for the nine designed parts;
+#: a second platform brings its own table.
+ASSEMBLY_TABLE: tuple[AssemblyEntry, ...] = (
+    AssemblyEntry(
+        "foot_left", 1, "lower",
+        "Set the left base foot flat on the bench, centred under "
+        "where the left upright will stand",
+    ),
+    AssemblyEntry(
+        "foot_right", 2, "lower",
+        "Set the right base foot flat on the bench, one span from "
+        "the left foot",
+    ),
+    AssemblyEntry(
+        "upright_left", 3, "lower",
+        "Stand the left upright on its foot and bolt it through",
+        requires=("foot_left",),
+        fastener_bom_ids=("fasteners",), fastener_count=4,
+    ),
+    AssemblyEntry(
+        "upright_right", 4, "lower",
+        "Stand the right upright on its foot and bolt it through",
+        requires=("foot_right",),
+        fastener_bom_ids=("fasteners",), fastener_count=4,
+    ),
+    AssemblyEntry(
+        "top_beam", 5, "lower",
+        "Lift the top beam across both uprights and bolt it down "
+        "at both ends",
+        requires=("upright_left", "upright_right"),
+        fastener_bom_ids=("fasteners",), fastener_count=4,
+    ),
+    AssemblyEntry(
+        "carriage", 6, "slide",
+        "Slide the travelling carriage onto the top beam from "
+        "the left-hand end",
+        requires=("top_beam",),
+        fastener_bom_ids=("fasteners",), fastener_count=2,
+    ),
+    AssemblyEntry(
+        "spool_drum", 7, "lower",
+        "Drop the spool drum into the carriage cradle and fit "
+        "its retaining pin",
+        requires=("carriage",),
+        fastener_bom_ids=("fasteners",), fastener_count=1,
+    ),
+    AssemblyEntry(
+        "release_gate", 8, "rise",
+        "Fit the release gate under the spool and connect its "
+        "actuator lead",
+        requires=("spool_drum",),
+        fastener_bom_ids=("fasteners",), fastener_count=2,
+    ),
+    AssemblyEntry(
+        "sensor_bracket", 9, "side",
+        "Clip the sensor bracket onto the right upright at "
+        "mid-height and plug in its lead",
+        requires=("upright_right",),
+        fastener_bom_ids=("fasteners",), fastener_count=2,
+    ),
+)
+
+
+def assembly_entry(part_id: str) -> AssemblyEntry:
+    """The assembly-table row for one designed part."""
+    for entry in ASSEMBLY_TABLE:
+        if entry.part_id == part_id:
+            return entry
+    raise KeyError(f"no assembly entry for part {part_id!r}")
+
+
 @dataclass
 class GantryMeasurements:
     """Key dimensions read back from the built solid (test T3.1)."""

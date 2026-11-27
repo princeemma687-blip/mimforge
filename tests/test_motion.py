@@ -100,6 +100,9 @@ def test_click_path_end_states_with_motion_forced_off(app, tmp_path):
     set_motion_enabled(False)
     win = MainWindow(projects_dir=tmp_path / "projects")
     panel = win.projects_panel
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText("Pendulum Class")
     panel.create_button.click()
     assert win.current_section() == "Author"

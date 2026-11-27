@@ -34,6 +34,9 @@ def _window(tmp_path) -> MainWindow:
 
 def _create_via_clicks(win: MainWindow, title: str = "Pendulum Class") -> None:
     panel = win.projects_panel
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText(title)
     panel.create_button.click()
 
@@ -74,6 +77,9 @@ def test_actions_without_a_project_fail_in_plain_words(app, tmp_path):
 
 def test_create_without_a_title_is_a_plain_status(app, tmp_path):
     win = _window(tmp_path)
+    win.projects_panel.template_combo.setCurrentIndex(
+        win.projects_panel.template_combo.findData("pendulum")
+    )
     win.projects_panel.title_edit.setText("   ")
     win.projects_panel.create_button.click()
     assert "GIVE THE PROJECT A TITLE" in (

@@ -1,0 +1,52 @@
+{
+  "g_truth": 9.81,
+  "amplitude_deg": 8.0,
+  "synthetic": true,
+  "records": [
+    {
+      "length_m": 0.9,
+      "video_file": "demo_L090cm.mp4",
+      "n_frames": 656,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.9031219547658238,
+      "true_period_s": 1.905443444725821
+    },
+    {
+      "length_m": 0.8,
+      "video_file": "demo_L080cm.mp4",
+      "n_frames": 619,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.7942805861865494,
+      "true_period_s": 1.7964693077514269
+    },
+    {
+      "length_m": 0.7,
+      "video_file": "demo_L070cm.mp4",
+      "n_frames": 579,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.6783958023124947,
+      "true_period_s": 1.680443164100661
+    },
+    {
+      "length_m": 0.6,
+      "video_file": "demo_L060cm.mp4",
+      "n_frames": 536,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.5538925691547856,
+      "true_period_s": 1.555788057302803
+    },
+    {
+      "length_m": 0.5,
+      "video_file": "demo_L050cm.mp4",
+      "n_frames": 489,
+      "fps": 30,
+      "amplitude_deg": 8.0,
+      "small_angle_period_s": 1.4185033534428875,
+      "true_period_s": 1.4202336897048604
+    }
+  ]
+}

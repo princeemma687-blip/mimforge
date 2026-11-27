@@ -74,6 +74,9 @@ def test_signed_out_by_default_and_app_fully_usable(
     panel.sign_in_button.click()
     assert "NOT SET UP" in panel.auth_status_label.text()
     # ...and the app itself never needed the account.
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText("Morning Class")
     panel.create_button.click()
     assert window.current_project is not None
@@ -139,6 +142,9 @@ def test_signed_in_sync_round_trips_through_the_widgets(
     panel = window.projects_panel
     _type_credentials(window)
     panel.create_account_button.click()
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText("Synced Class")
     panel.create_button.click()
     project = window.current_project

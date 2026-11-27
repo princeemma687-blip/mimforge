@@ -27,6 +27,7 @@ SELF_TEST_MODULES = [
     "mimforge",
     "mimforge.adjust",
     "mimforge.allowlist",
+    "mimforge.assembly",
     "mimforge.bom",
     "mimforge.checker",
     "mimforge.codegen",
@@ -34,6 +35,7 @@ SELF_TEST_MODULES = [
     "mimforge.delivery",
     "mimforge.design",
     "mimforge.discrepancy",
+    "mimforge.dossier",
     "mimforge.firebase_auth",
     "mimforge.firebase_sync",
     "mimforge.models",
@@ -56,8 +58,11 @@ SELF_TEST_MODULES = [
     "mimforge.templates",
     "mimforge.verification",
     "mimforge.ui",
+    "mimforge.ui.assembly",
     "mimforge.ui.authoring",
     "mimforge.ui.deliver",
+    "mimforge.ui.drawings",
+    "mimforge.ui.icons",
     "mimforge.ui.machine_view",
     "mimforge.ui.main_window",
     "mimforge.ui.motion",
@@ -65,6 +70,7 @@ SELF_TEST_MODULES = [
     "mimforge.ui.playback",
     "mimforge.ui.sam_picker",
     "mimforge.visuals",
+    "mimforge.wiring",
 ]
 
 # Third-party runtime packages the app depends on directly or one

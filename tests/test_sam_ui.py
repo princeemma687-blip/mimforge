@@ -87,6 +87,9 @@ def _clip_with_audio(tmp_path) -> Path:
 def _window(tmp_path) -> MainWindow:
     window = MainWindow(projects_dir=tmp_path / "projects")
     panel = window.projects_panel
+    panel.template_combo.setCurrentIndex(
+        panel.template_combo.findData("pendulum")
+    )
     panel.title_edit.setText("Click Class")
     panel.create_button.click()
     assert window.current_project is not None

@@ -50,6 +50,10 @@ MUTED = "#7A838D"
 GRID_LINE = "#262B31"
 STOP_RED = "#E5484D"  # safety-signal exception: the E-stop only
 MONO_FAMILY = "Consolas, 'JetBrains Mono', 'DejaVu Sans Mono', monospace"
+# Stage 4.2 type audit: a proper grotesque for prose. Mono stays the
+# face for every measurement, readout and code surface; prose (step
+# narration, observations, check questions) reads in this face.
+PROSE_FAMILY = "Segoe UI, Inter, 'DejaVu Sans', Arial, sans-serif"
 
 SECTIONS = [
     "Projects",
@@ -86,6 +90,18 @@ def app_icon() -> QIcon:
 def mono_font(point_size: int = 10, bold: bool = False) -> QFont:
     font = QFont()
     font.setFamilies([f.strip().strip("'") for f in MONO_FAMILY.split(",")])
+    font.setPointSize(point_size)
+    font.setBold(bold)
+    return font
+
+
+def prose_font(point_size: int = 10, bold: bool = False) -> QFont:
+    """The grotesque face for prose surfaces (Stage 4.2 type audit).
+
+    Measurements, readouts and code stay mono; narration, expected
+    observations and check questions read in this face."""
+    font = QFont()
+    font.setFamilies([f.strip().strip("'") for f in PROSE_FAMILY.split(",")])
     font.setPointSize(point_size)
     font.setBold(bold)
     return font
@@ -529,6 +545,14 @@ class MainWindow(QMainWindow):
         }
         for section in SECTIONS:
             self.stack.addWidget(panels[section])
+        # Stage 3: the BUILD IT assembly player is a guest page of
+        # the Design section (reached from Design's BUILD IT
+        # button, left by its BACK button), not a nav section of
+        # its own.
+        from .assembly import AssemblyPlayer
+
+        self.assembly_panel = AssemblyPlayer(self)
+        self.stack.addWidget(self.assembly_panel)
         self.canvas.body.addWidget(self.stack)
         root.addWidget(self.canvas, stretch=1)
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
@@ -985,6 +1009,58 @@ class MainWindow(QMainWindow):
         return [
             (tier, bom.total_ngn) for tier, bom in self.bom_tables()
         ]
+
+    # ------------------------------------------------------- stage 3 views
+
+    def current_wiring_diagram(self, tier: str | None = None):
+        """The generated wiring schematic for the current design
+        at one tier (the tier's own part names on the nodes)."""
+        from ..wiring import build_wiring_diagram
+
+        tables = dict(self.bom_tables())
+        bom = tables.get(tier or "prototype") or tables["prototype"]
+        return build_wiring_diagram(
+            self.current_params(), bom, db=self.parts_db()
+        )
+
+    def current_panel_layout(self):
+        """The generated control-panel face for the current
+        template (its own control list, the stop guaranteed)."""
+        from ..wiring import build_panel_layout
+
+        return build_panel_layout(self.current_template_data or {})
+
+    def _design_tier(self) -> str:
+        """The tier the Design panel is currently showing --
+        assembly cards and the dossier price against it."""
+        combo = getattr(self.design_panel, "tier_combo", None)
+        if combo is not None and combo.currentData():
+            return str(combo.currentData())
+        return "prototype"
+
+    def show_design_section(self):
+        """Back from the BUILD IT player to the Design section."""
+        self.nav.setCurrentRow(SECTIONS.index("Design"))
+
+    def show_assembly(self, narrate: bool = True):
+        """BUILD IT: generate the coupling sequence for the
+        current design at the Design panel's tier, narrate it
+        through the Stage 2 speech layer, and open the assembly
+        player. Narration is an enhancement: if no voice can
+        render, the player still opens, silent, with its text."""
+        from ..assembly import build_assembly_plan, narrate_assembly_steps
+
+        plan = build_assembly_plan(
+            self.current_params(), self._design_tier(), db=self.parts_db()
+        )
+        if narrate:
+            try:
+                narrate_assembly_steps(plan)
+            except Exception:
+                pass  # silent-safe: the steps keep their text
+        self.assembly_panel.set_plan(plan)
+        self.stack.setCurrentWidget(self.assembly_panel)
+        return plan
 
     # -------------------------------------------------------- verification
 
@@ -1680,6 +1756,72 @@ class MainWindow(QMainWindow):
         )
         return out
 
+    def export_production_document(self, path=None):
+        """Export the production document (Stage 3): the whole
+        virtual production as one self-contained HTML dossier --
+        the machine from every side, what it does, the coupling
+        steps, wiring, panel, materials at every tier, the risk
+        assessment and the checked code. It is a production
+        document, so the sign-off gate is consulted FIRST, before
+        codegen, rendering and any dialog, exactly as for the
+        signed package (finding #2's order); the write path in
+        ``dossier`` re-checks it."""
+        from .. import delivery, dossier, risk
+
+        panel = self.deliver_panel
+        if self.current_project is None or self.current_template_data is None:
+            panel.set_status("OPEN A PROJECT FIRST")
+            return None
+        assessment = self.current_assessment()
+        try:
+            risk.assert_export_ready(assessment)
+        except risk.ExportBlocked:
+            panel.set_status(
+                "EXPORT REFUSED — A TEACHER MUST SIGN THE RISK "
+                "ASSESSMENT FIRST"
+            )
+            return None
+        try:
+            bundle = delivery.generate_checked_code(
+                self.current_template_data, self.current_params()
+            )
+        except delivery.DeliveryError:
+            panel.set_status(
+                "EXPORT BLOCKED — THE GENERATED CODE FAILED ITS "
+                "SAFETY CHECK"
+            )
+            return None
+        if path is None:
+            chosen, _selected = QFileDialog.getSaveFileName(
+                self,
+                "Export production document",
+                str(
+                    _documents_dir()
+                    / f"{_slugify(self.current_project.title)}-production.html"
+                ),
+                "HTML files (*.html)",
+            )
+            if not chosen:
+                panel.set_status("EXPORT CANCELLED")
+                return None
+            path = chosen
+        out = dossier.export_production_document(
+            out_path=path,
+            assessment=assessment,
+            project_title=self.current_project.title,
+            template_data=self.current_template_data,
+            params=self.current_params(),
+            tier_boms=dict(self.bom_tables()),
+            code=bundle,
+            lesson=self.playback_panel.lesson,
+            db=self.parts_db(),
+            assembly_tier=self._design_tier(),
+        )
+        panel.set_status(
+            f"PRODUCTION DOCUMENT SAVED — {Path(out).name}"
+        )
+        return out
+
     # ------------------------------------------------------ demonstration
 
     def _sam_model_dir(self) -> Path:
@@ -1882,16 +2024,13 @@ class MainWindow(QMainWindow):
                     prompt,
                     stride=max(1, LEAN_PROFILE.keyframe_stride),
                 )
-                coverage = track.coverage
-                if coverage > 0:
-                    tracking_note = (
-                        "TRACKING: THE OBJECT WAS FOUND IN "
-                        f"{coverage:.0%} OF THE FRAMES CHECKED"
-                    )
-                else:
-                    tracking_note = (
-                        "TRACKING: THE OBJECT WAS NOT FOUND IN THE VIDEO"
-                    )
+                # The headline number is the MEASURED coverage --
+                # bridged frames are reported as bridged in the
+                # note, never folded silently into "found".
+                coverage = track.measured_coverage
+                from ..perception import coverage_summary
+
+                tracking_note = "TRACKING: " + coverage_summary(track).upper()
             except Exception:  # tracking reports, it never blocks
                 track = None
                 tracking_note = "TRACKING: COULD NOT RUN ON THIS VIDEO"
@@ -1915,11 +2054,16 @@ class MainWindow(QMainWindow):
                 f"THE DRAFT WAS NOT CHANGED · {tracking_note}"
             )
             return None
+        from ..perception import coverage_report
+
         draft = build_draft(
             self.current_template,
             transcript,
             advisor=self._draft_advisor(),
             track_coverage=coverage,
+            track_report=(
+                coverage_report(track) if track is not None else None
+            ),
         )
         self.author_panel.load_draft(draft)
         # The demonstration itself is SAVED with the project (the
@@ -2006,6 +2150,19 @@ class MainWindow(QMainWindow):
             "duration_s": info.duration_s,
             "has_audio": info.has_audio,
             "coverage": coverage,
+            "track_spans": (
+                [
+                    {
+                        "kind": s.kind,
+                        "start_s": round(float(s.start_s), 3),
+                        "end_s": round(float(s.end_s), 3),
+                        "reason": s.reason,
+                    }
+                    for s in track.spans
+                ]
+                if track is not None
+                else []
+            ),
             "transcript_engine": transcript.engine,
             "steps": len(draft.steps),
             "periodic": periodic,

@@ -507,25 +507,42 @@ def stage_sample_clip() -> None:
         ffmpeg = candidates[0] if candidates else ffmpeg
     dest = BUNDLED / "selftest" / "sample.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    # Draw the disc with ffmpeg's drawbox on a moving x expression
-    # (a filled square reads to the centroid tracker exactly like
-    # a disc: one bright blob on a dark field).
-    vf = (
-        "drawbox=x='120+80*sin(2*PI*t/2)':y=100:w=40:h=40:"
-        "color=red@1:t=fill"
-    )
+    # Render the frames HERE and pipe them to ffmpeg as raw video.
+    # The previous version drew the disc with ffmpeg's drawbox and
+    # a sin(t) expression -- in the staged ffmpeg build the box came
+    # out STATIC, so the old self-test passed vacuously on a
+    # motionless disc until the improved tracker refused to lock
+    # onto scenery (2026-11-26). Raw frames are deterministic on
+    # any ffmpeg build: a bright red 40x40 square swinging
+    # sinusoidally (2 s period) on a dark field, which reads to the
+    # tracker exactly like a disc.
+    import math
+
+    width, height, n_frames = 320, 240, 90
+    background = bytes((24, 20, 16))  # BGR of 0x101418
+    red_run = bytes((0, 0, 255)) * 40
+    raw = bytearray()
+    for i in range(n_frames):
+        frame = bytearray(background * (width * height))
+        cx = 120 + round(80 * math.sin(2 * math.pi * i / 60))
+        for row in range(100, 140):
+            off = (row * width + cx) * 3
+            frame[off : off + 120] = red_run
+        raw += frame
     cmd = [
         str(ffmpeg),
         "-v", "error", "-y",
-        "-f", "lavfi", "-i", "color=c=0x101418:size=320x240:rate=30",
+        "-f", "rawvideo", "-pix_fmt", "bgr24",
+        "-s", f"{width}x{height}", "-r", "30", "-i", "-",
         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000",
-        "-vf", vf,
         "-t", "3", "-c:v", "mpeg4", "-c:a", "aac", "-shortest",
         str(dest),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(cmd, input=bytes(raw), capture_output=True, timeout=120)
     if proc.returncode != 0 or not dest.is_file():
-        raise SystemExit(f"sample clip generation failed: {proc.stderr}")
+        raise SystemExit(
+            f"sample clip generation failed: {proc.stderr.decode(errors='replace')}"
+        )
     print(f"  sample clip staged ({dest.stat().st_size} bytes)")
 
 
