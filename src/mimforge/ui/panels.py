@@ -75,6 +75,36 @@ class ProjectsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(_plate("PROJECTS"))
 
+        # First-run guide (Stage 5, plan 10.2 as amended): the
+        # guided empty state for a launch with no project open. It
+        # shows the whole loop in plain words and starts cleanly
+        # from any library template -- no practical is named, none
+        # is favoured, and no example project is pre-loaded. The
+        # host hides it the moment a project opens.
+        self.first_run_guide = QWidget()
+        guide_layout = QVBoxLayout(self.first_run_guide)
+        guide_layout.setContentsMargins(0, 0, 0, 0)
+        guide_layout.addWidget(_caption("FIRST RUN — HOW MIMFORGE WORKS"))
+        self.first_run_guide_text = QLabel(
+            "1  DEMONSTRATE — Record a teacher doing the practical, "
+            "or load a recording of one.\n"
+            "2  DESIGN — The app designs the machine for it and "
+            "lists the materials it needs.\n"
+            "3  BUILD — Couple the machine together, step by step, "
+            "following the app.\n"
+            "4  TEACH — Play the lesson back and check the "
+            "learner's readings against the machine."
+        )
+        self.first_run_guide_text.setFont(mono_font(10))
+        self.first_run_guide_text.setStyleSheet(f"color: {TEXT};")
+        self.first_run_guide_text.setWordWrap(True)
+        guide_layout.addWidget(self.first_run_guide_text)
+        self.start_button = QPushButton("START FROM THE LIBRARY  →")
+        self.start_button.setFont(mono_font(10, bold=True))
+        self.start_button.clicked.connect(self._on_start_from_library)
+        guide_layout.addWidget(self.start_button)
+        layout.addWidget(self.first_run_guide)
+
         layout.addWidget(_caption("NEW PROJECT — FROM THE PRACTICAL LIBRARY"))
         self.template_combo = QComboBox()
         self.template_combo.setFont(mono_font(10))
@@ -102,6 +132,39 @@ class ProjectsPanel(QWidget):
         self.open_button.setFont(mono_font(10, bold=True))
         self.open_button.clicked.connect(self._on_open)
         layout.addWidget(self.open_button)
+
+        # Demonstration set (Stage 5, plan 10.1): the project's
+        # numbered episodes, one row each, with the quality flags
+        # the import measured and the teacher's verdict. The host
+        # owns the data; this panel only shows it and reports
+        # which episode the teacher picked.
+        layout.addWidget(_caption("DEMONSTRATION SET — EPISODES IN THIS PROJECT"))
+        self.episode_list = QListWidget()
+        self.episode_list.setFont(mono_font(10))
+        self.episode_list.itemSelectionChanged.connect(
+            self._on_episode_selected
+        )
+        layout.addWidget(self.episode_list, stretch=1)
+        self.episode_numbers: list[int] = []
+        episode_row = QHBoxLayout()
+        self.approve_button = QPushButton("✓  MARK APPROVED")
+        self.approve_button.setFont(mono_font(10, bold=True))
+        self.approve_button.clicked.connect(
+            lambda: self.host.set_episode_verdict(
+                self.selected_episode_number(), "approved"
+            )
+        )
+        episode_row.addWidget(self.approve_button)
+        self.needs_work_button = QPushButton("✎  MARK NEEDS WORK")
+        self.needs_work_button.setFont(mono_font(10, bold=True))
+        self.needs_work_button.clicked.connect(
+            lambda: self.host.set_episode_verdict(
+                self.selected_episode_number(), "needs-work"
+            )
+        )
+        episode_row.addWidget(self.needs_work_button)
+        layout.addLayout(episode_row)
+        self._on_episode_selected()
 
         self.status_label = _status("STATUS: NO PROJECT OPEN")
         layout.addWidget(self.status_label)
@@ -190,6 +253,49 @@ class ProjectsPanel(QWidget):
 
     def show_current(self, title: str) -> None:
         self.status_label.setText(f"STATUS: CURRENT PROJECT — {title}")
+
+    def show_first_run_guide(self, show: bool) -> None:
+        """The guided empty state: visible only while no project
+        is open (first run, or a later launch before any project
+        is picked)."""
+        self.first_run_guide.setVisible(show)
+
+    def _on_start_from_library(self) -> None:
+        """Start cleanly from the library: put the cursor on the
+        template picker and say so -- no practical is chosen by
+        the app, the teacher picks one."""
+        self.template_combo.setFocus()
+        self.status_label.setText(
+            "STATUS: CHOOSE A PRACTICAL FROM THE LIBRARY, "
+            "THEN CREATE THE PROJECT"
+        )
+
+    def show_episodes(self, rows: list[tuple[int, str]]) -> None:
+        """Replace the demonstration-set list. ``rows`` is
+        ``(episode number, one-line summary)`` in number order; a
+        number of 0 marks a plain-words problem row (a set that
+        could not be read), which carries no verdict buttons."""
+        self.episode_list.clear()
+        self.episode_numbers = []
+        for number, line in rows:
+            self.episode_list.addItem(line)
+            self.episode_numbers.append(number)
+        self._on_episode_selected()
+
+    def selected_episode_number(self) -> int | None:
+        """The episode number the teacher picked, or None when the
+        selection is empty or a problem row."""
+        current = self.episode_list.currentRow()
+        if current < 0 or current >= len(self.episode_numbers):
+            return None
+        number = self.episode_numbers[current]
+        return number if number > 0 else None
+
+    def _on_episode_selected(self) -> None:
+        """Verdict buttons work only on a real episode row."""
+        enabled = self.selected_episode_number() is not None
+        self.approve_button.setEnabled(enabled)
+        self.needs_work_button.setEnabled(enabled)
 
     def show_sync(self, on: bool, text: str) -> None:
         self.sync_button.setText("SYNC: ON" if on else "SYNC: OFF")

@@ -215,8 +215,17 @@ def package_files(
     params: GantryParameters,
     code: CodeBundle,
     parts_db: PartsDB | None = None,
+    episodes: dict | None = None,
 ) -> dict[str, bytes]:
-    """The payload files of one delivery package, as name -> bytes."""
+    """The payload files of one delivery package, as name -> bytes.
+
+    ``episodes`` is the project's demonstration set as stored
+    (``episodes.DemonstrationSet.to_dict``) when the project holds
+    one: it travels as ``episodes.json`` so the receiver can see
+    which demonstrations the machine was built from and what each
+    one measured. A project with no episodes simply carries no
+    such file -- the gate and the signature are unchanged either
+    way."""
 
     def as_json(payload: Any) -> bytes:
         return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -241,6 +250,8 @@ def package_files(
         files["draft.json"] = as_json(draft)
     if lesson is not None:
         files["lesson.json"] = as_json(lesson)
+    if episodes is not None:
+        files["episodes.json"] = as_json(episodes)
     return files
 
 

@@ -36,6 +36,7 @@ SELF_TEST_MODULES = [
     "mimforge.design",
     "mimforge.discrepancy",
     "mimforge.dossier",
+    "mimforge.episodes",
     "mimforge.firebase_auth",
     "mimforge.firebase_sync",
     "mimforge.models",

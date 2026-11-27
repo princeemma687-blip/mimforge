@@ -576,6 +576,10 @@ class MainWindow(QMainWindow):
         self.design_panel.show_design(
             None, self.current_params(), self.bom_tables()
         )
+        # Stage 5 first run: no project is open yet, so the guided
+        # empty state shows and the demonstration set is empty.
+        self.projects_panel.show_first_run_guide(True)
+        self.projects_panel.show_episodes([])
         # Restore any saved sign-in so the account plate is honest
         # from the first frame. Never raises: no settings simply
         # means NOT SIGNED IN.
@@ -954,8 +958,114 @@ class MainWindow(QMainWindow):
         )
         self.last_trajectory = None
         self._refresh_replay_button()
+        self.projects_panel.show_first_run_guide(False)
+        self.refresh_demonstration_set()
         if self._sync_on:
             self.push_sync_metadata()
+
+    def refresh_demonstration_set(self) -> None:
+        """Rebuild the Projects panel's demonstration-set view from
+        the current project's episode set. A set record that cannot
+        be read is shown as one plain-words problem row -- the
+        project still opens and nothing else is affected."""
+        from ..episodes import EpisodeError, demonstration_set
+
+        panel = self.projects_panel
+        if self.current_project is None:
+            panel.show_episodes([])
+            return
+        try:
+            episode_set = demonstration_set(self.current_project)
+        except EpisodeError:
+            panel.show_episodes(
+                [
+                    (
+                        0,
+                        "THE EPISODE LIST COULD NOT BE READ — "
+                        "THE PROJECT STILL OPENS",
+                    )
+                ]
+            )
+            return
+        records = self.current_project.list_records("demonstration")
+        missing = set(episode_set.missing_demonstrations(records))
+        rows = []
+        for episode in episode_set.episodes:
+            parts = [f"EPISODE {episode.number}"]
+            if episode.source_name:
+                parts.append(episode.source_name)
+            if episode.coverage is not None:
+                parts.append(
+                    "TRACKED "
+                    f"{episode.coverage:.0%} OF THE FRAMES CHECKED"
+                )
+            else:
+                parts.append("TRACKING NOT MEASURED")
+            if episode.period_s is not None:
+                parts.append(f"PERIOD {episode.period_s:.3f} S")
+            else:
+                parts.append("PERIOD NOT MEASURED")
+            parts.append(
+                "VERDICT: "
+                + episode.verdict.upper().replace("-", " ")
+            )
+            if episode.number in missing:
+                parts.append("DEMONSTRATION RECORD MISSING")
+            rows.append((episode.number, " · ".join(parts)))
+        panel.show_episodes(rows)
+
+    def set_episode_verdict(self, number, verdict: str) -> None:
+        """Record the teacher's verdict on one episode and save it.
+        A missing selection or an unknown verdict is a plain status,
+        never a crash; a set record that cannot be read is reported
+        the same way and the verdict is not recorded."""
+        from ..episodes import (
+            EpisodeError,
+            demonstration_set,
+            save_demonstration_set,
+        )
+        from ..projects import ProjectError
+
+        panel = self.projects_panel
+        if self.current_project is None or number is None:
+            return
+        try:
+            episode_set = demonstration_set(self.current_project)
+            episode_set.set_verdict(number, verdict)
+        except EpisodeError as exc:
+            panel.status_label.setText(f"STATUS: {str(exc).upper()}")
+            return
+        save_demonstration_set(self.current_project, episode_set)
+        try:
+            self.current_project.save()
+        except ProjectError:
+            panel.status_label.setText(
+                "STATUS: THE VERDICT COULD NOT BE SAVED — "
+                "THE PROJECT STORE REPORTED A PROBLEM"
+            )
+            return
+        self.refresh_demonstration_set()
+        panel.status_label.setText(
+            "STATUS: EPISODE "
+            f"{number} MARKED {verdict.upper().replace('-', ' ')}"
+        )
+
+    def _episodes_payload(self) -> dict | None:
+        """The current project's episode set as stored data, for the
+        signed package -- None when the project holds no episodes
+        or the set cannot be read (the export then carries no
+        episodes file and is otherwise unchanged)."""
+        from ..episodes import EpisodeError, demonstration_set
+
+        if self.current_project is None:
+            return None
+        try:
+            episode_set = demonstration_set(self.current_project)
+        except EpisodeError:
+            return None
+        if not episode_set.episodes:
+            return None
+        return episode_set.to_dict()
 
     def _persist_current_draft(self) -> None:
         from ..projects import ProjectError
@@ -1734,6 +1844,7 @@ class MainWindow(QMainWindow):
             params=self.current_params(),
             code=bundle,
             parts_db=self.parts_db(),
+            episodes=self._episodes_payload(),
         )
         _private_pem, public_pem = delivery.load_or_create_keypair(
             self.projects_dir / ".keys"
@@ -2090,14 +2201,67 @@ class MainWindow(QMainWindow):
             except ValueError:
                 periodic = None
         saved_note = ""
+        episode_number = None
         if self.current_project is not None:
             self.current_project.put_record(
                 "draft", "current", draft.to_dict()
             )
+            # Episode discipline (Stage 5): this import is the
+            # project's next numbered episode, carrying the quality
+            # flags the import already measured. A set record that
+            # cannot be read does not block the import, but the
+            # recording is then saved without an episode number
+            # and the status says so.
+            from ..episodes import (
+                EpisodeError,
+                demonstration_set,
+                new_episode,
+                save_demonstration_set,
+            )
+
+            episode_set = None
+            episode = None
+            safe_coverage = coverage
+            if not isinstance(safe_coverage, (int, float)) or isinstance(
+                safe_coverage, bool
+            ):
+                safe_coverage = None
+            elif (
+                safe_coverage != safe_coverage  # NaN
+                or safe_coverage in (float("inf"), float("-inf"))
+                or not 0.0 <= safe_coverage <= 1.0
+            ):
+                safe_coverage = None
+            try:
+                episode_set = demonstration_set(self.current_project)
+                episode = new_episode(
+                    episode_set,
+                    source_name=path.name,
+                    tracker=tracker_kind,
+                    coverage=safe_coverage,
+                    period_s=(
+                        periodic["mean_period_s"]
+                        if periodic is not None
+                        else None
+                    ),
+                )
+                episode_number = episode.number
+            except EpisodeError:
+                episode_set = None
+                episode = None
             stored_media = None
             digest = None
             try:
-                rel = f"demonstration{path.suffix.lower()}"
+                if episode is not None:
+                    # Each episode's recording is its own sealed
+                    # media file: a later import never overwrites
+                    # an earlier episode's video.
+                    rel = (
+                        f"demonstration-episode-{episode.number}"
+                        f"{path.suffix.lower()}"
+                    )
+                else:
+                    rel = f"demonstration{path.suffix.lower()}"
                 digest = self.current_project.add_media_file(rel, path)
                 stored_media = f"media/{rel}"
             except OSError:
@@ -2107,49 +2271,65 @@ class MainWindow(QMainWindow):
                 )
             if stored_media is not None:
                 saved_note = " · THE RECORDING IS SAVED IN THE PROJECT"
+            if episode is not None:
+                episode.video_sha256 = digest or ""
             from ..perception import serialise_track
 
-            self.current_project.put_record(
-                "demonstration",
-                "current",
-                {
-                    "source_name": path.name,
-                    "tracker": tracker_kind,
-                    "stored_media": stored_media,
-                    "sha256": digest,
-                    "duration_s": info.duration_s,
-                    "width": info.width,
-                    "height": info.height,
-                    "fps": info.fps,
-                    "has_audio": info.has_audio,
-                    "track": (
-                        serialise_track(track)
-                        if track is not None
-                        else None
-                    ),
-                    "periodic": periodic,
-                    "transcript": {
-                        "engine": transcript.engine,
-                        "model": transcript.model,
-                        "language": transcript.language,
-                        "segments": [
-                            {
-                                "start_s": s.start_s,
-                                "end_s": s.end_s,
-                                "text": s.text,
-                            }
-                            for s in transcript.segments
-                        ],
-                    },
+            demo_record = {
+                "source_name": path.name,
+                "tracker": tracker_kind,
+                "stored_media": stored_media,
+                "sha256": digest,
+                "duration_s": info.duration_s,
+                "width": info.width,
+                "height": info.height,
+                "fps": info.fps,
+                "has_audio": info.has_audio,
+                "track": (
+                    serialise_track(track)
+                    if track is not None
+                    else None
+                ),
+                "periodic": periodic,
+                "transcript": {
+                    "engine": transcript.engine,
+                    "model": transcript.model,
+                    "language": transcript.language,
+                    "segments": [
+                        {
+                            "start_s": s.start_s,
+                            "end_s": s.end_s,
+                            "text": s.text,
+                        }
+                        for s in transcript.segments
+                    ],
                 },
+            }
+            self.current_project.put_record(
+                "demonstration", "current", demo_record
             )
+            if episode is not None:
+                self.current_project.put_record(
+                    "demonstration", episode.demonstration_id, demo_record
+                )
+                episode_set.add(episode)
+                save_demonstration_set(
+                    self.current_project, episode_set
+                )
+            else:
+                saved_note += (
+                    " · THE EPISODE LIST COULD NOT BE READ, SO "
+                    "THIS RECORDING HAS NO EPISODE NUMBER"
+                )
             self.current_project.save()
+            self.refresh_demonstration_set()
         self.last_import_report = {
             "path": str(path),
             "tracker": tracker_kind,
             "duration_s": info.duration_s,
             "has_audio": info.has_audio,
             "coverage": coverage,
+            "episode": episode_number,
             "track_spans": (
                 [
                     {
@@ -2170,6 +2350,11 @@ class MainWindow(QMainWindow):
         panel.show_import_status(
             f"DEMONSTRATION IMPORTED — {len(draft.steps)} STEPS "
             f"DRAFTED FROM THE RECORDING · {tracking_note}{saved_note}"
+            + (
+                f" · EPISODE {episode_number}"
+                if episode_number is not None
+                else ""
+            )
         )
         self._refresh_replay_button()
         self._run_checker(

@@ -519,10 +519,10 @@ def test_import_saves_the_demonstration_with_the_project(
     demo = stored.get_record("demonstration", "current")
     assert demo is not None
     assert demo["source_name"] == clip.name
-    assert demo["stored_media"] == "media/demonstration.mp4"
+    assert demo["stored_media"] == "media/demonstration-episode-1.mp4"
     media_file = (
         window.projects_dir / project.project_id / "media"
-        / "demonstration.mp4"
+        / "demonstration-episode-1.mp4"
     )
     assert media_file.is_file()
     assert media_file.stat().st_size == clip.stat().st_size
