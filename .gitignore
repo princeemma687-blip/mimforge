@@ -18,6 +18,9 @@ ENV/
 
 # Tooling caches
 .pytest_cache/
+# Written by every `--self-test` run into its working directory
+# (the frozen-app gate's on-disk evidence); a runtime artefact.
+self-test-report.txt
 .mypy_cache/
 .ruff_cache/
 .tox/

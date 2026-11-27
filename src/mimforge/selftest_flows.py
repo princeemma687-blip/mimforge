@@ -992,18 +992,30 @@ def _probe_episodes(results) -> None:
         )
 
 
-def flows_main() -> int:
+def flows_main(collect: list[str] | None = None) -> int:
     """Console entry for the flow probes: prints one line per
-    probe and returns 0 only when every probe passed."""
+    probe and returns 0 only when every probe passed. When
+    ``collect`` is a list, every printed line is also appended
+    to it (the app's self-test report file is built from it);
+    what is verified and what is printed do not change."""
     frozen = bool(getattr(sys, "frozen", False))
     results = run_flow_probes(require_bundled=True)
     failed = 0
     for name, ok, detail in results:
-        print(f"FLOW {'OK  ' if ok else 'FAIL'} {name} -- {detail}", flush=True)
+        line = f"FLOW {'OK  ' if ok else 'FAIL'} {name} -- {detail}"
+        print(line, flush=True)
+        if collect is not None:
+            collect.append(line)
         if not ok:
             failed += 1
     if failed:
-        print(f"SELF-TEST FLOWS FAILED ({failed} probe(s))", flush=True)
+        line = f"SELF-TEST FLOWS FAILED ({failed} probe(s))"
+        print(line, flush=True)
+        if collect is not None:
+            collect.append(line)
         return 1
-    print("SELF-TEST FLOWS OK", flush=True)
+    line = "SELF-TEST FLOWS OK"
+    print(line, flush=True)
+    if collect is not None:
+        collect.append(line)
     return 0

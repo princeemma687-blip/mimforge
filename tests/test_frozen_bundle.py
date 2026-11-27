@@ -17,7 +17,11 @@ suite, instead of on a user's machine:
   maintained RUNTIME_PACKAGES list (a new third-party import
   forces a packaging decision);
 - ``__main__``'s self-test module list matches the source tree;
-- ``python -m mimforge --self-test`` runs green as a subprocess.
+- ``python -m mimforge --self-test`` runs green as a subprocess;
+- the self-test subprocess exits with its verdict code (never a
+  native-teardown abort) and leaves ``self-test-report.txt``
+  behind -- the 2026-11-27 frozen-app teardown ghost (CI run
+  46046846065: exit -1073740791 after a fully green run).
 """
 
 import ast
@@ -253,3 +257,42 @@ def test_self_test_subprocess_passes():
         f"--self-test exited {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
     )
     assert "SELF-TEST OK" in proc.stdout
+
+
+def test_self_test_subprocess_exits_with_verdict_and_writes_report(tmp_path):
+    """Regression for the frozen-app teardown ghost (2026-11-27).
+
+    CI run 46046846065: the packaged exe printed a fully green
+    self-test and then died in native teardown -- exit
+    -1073740791 (0xC0000409) on Windows; locally the same build
+    aborted/segfaulted AFTER "SELF-TEST OK" in 7 of 8 clean-room
+    runs. The self-test therefore hard-exits with its own verdict
+    code (``os._exit`` in ``__main__._finish_self_test``) and
+    writes ``self-test-report.txt`` into the working directory
+    first. A subprocess killed by a signal reports a NEGATIVE
+    returncode here, so ``== 0`` asserts "verdict, not abort";
+    the report file's verdict line is the evidence a windowed
+    exe's stdout cannot leave behind. (Pre-fix this test fails
+    deterministically on the missing report file.)
+    """
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env["MIMFORGE_MOTION"] = "off"
+    proc = subprocess.run(
+        [sys.executable, "-m", "mimforge", "--self-test"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert proc.returncode == 0, (
+        f"--self-test exited {proc.returncode} (a negative code means "
+        f"a signal -- the teardown abort is back)\n"
+        f"{proc.stdout}\n{proc.stderr}"
+    )
+    assert "SELF-TEST OK" in proc.stdout
+    report = tmp_path / "self-test-report.txt"
+    assert report.is_file(), "self-test did not write its report file"
+    assert "SELF-TEST OK" in report.read_text(encoding="utf-8")
