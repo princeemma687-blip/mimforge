@@ -55,6 +55,33 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "pip install -e . failed." }
           .\.venv\Scripts\python.exe -m pip install pyinstaller pytest
           if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller pytest failed." }
+          # Packaging-time DATA SOURCE only (never shipped, never
+          # imported by the app): its espeak lexicon.db is converted
+          # into the bundled phoneme lexicon by the fetch step
+          # (Stage 2 narration).
+          .\.venv\Scripts\python.exe -m pip install gruut-lang-en
+          if ($LASTEXITCODE -ne 0) { throw "pip install gruut-lang-en failed." }
+
+      - name: Stage bundled runtime assets (ffmpeg, SAM, Whisper, Piper + Kokoro voices, config)
+        shell: pwsh
+        env:
+          # The app's public Firebase web config (identifiers, not
+          # secrets -- the per-user Firestore rules are the
+          # security), supplied as repository VARIABLES so the
+          # generated bundled config resource can be produced in
+          # CI. The fetch script never prints the values. Until
+          # the variables are set, this step stages everything
+          # else and warns; the frozen self-test gate below then
+          # fails the build on the missing config, by design.
+          FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ vars.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+        run: |
+          .\.venv\Scripts\python.exe setup\fetch_bundled_assets.py --platform win64
+          if ($LASTEXITCODE -ne 0) { throw "Bundled-asset staging failed -- build stopped." }
 
       - name: Run the FULL pytest suite (build gate)
         shell: pwsh
@@ -84,7 +111,12 @@ jobs:
           # self-test imports the full module graph and constructs
           # the main window: a module missing from the bundle (the
           # 2026-11-26 scipy crash) fails HERE, before packaging,
-          # instead of on the user's laptop.
+          # instead of on the user's laptop. Since Stage 0 (Gate
+          # v2) the frozen self-test ALSO runs the real-flow
+          # probes: bundled ffmpeg/ffprobe, SAM weights, Whisper
+          # model, Firebase config and the sample clip, exercised
+          # with a scrubbed PATH -- a resource missing from the
+          # bundle fails here too.
           $proc = Start-Process -FilePath "dist\Mimforge\Mimforge.exe" -ArgumentList "--self-test" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "Frozen-app self-test failed with exit code $($proc.ExitCode) -- a module is missing from the bundle. Do not package this build." }
 
