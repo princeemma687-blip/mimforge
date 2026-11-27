@@ -171,3 +171,37 @@ def test_gate_v2_flow_probes_pass_with_bundled_resources():
     failures = [(n, d) for n, ok, d in results if not ok]
     assert not failures, f"flow probes failed: {failures}"
     assert len(results) >= 10
+
+
+@pytest.mark.skipif(
+    resources.bundled_root() is None,
+    reason="packaging fetch step has not staged bundled/ here",
+)
+def test_gate_colour_track_probe_rejects_a_static_lock(monkeypatch):
+    """Retroactive audit regression (2026-11-27): the probe must
+    FAIL when the tracker returns a full-coverage track that never
+    moves -- the exact hollow proof the old tracker once produced
+    on a static sample clip. A tracker that sits still is fed in
+    directly, so the GATE (not the tracker) carries the invariant."""
+    import numpy as np
+
+    from mimforge import perception
+    from mimforge.perception import TrackResult
+    from mimforge.selftest_flows import run_flow_probes
+
+    def static_track(path, prompt, stride=1):
+        n = 18
+        return TrackResult(
+            times=np.arange(n) / 30.0,
+            xs=np.full(n, 160.0),
+            ys=np.full(n, 120.0),
+            fps=30.0,
+            frames_total=n,
+            frames_tracked=n,
+        )
+
+    monkeypatch.setattr(perception, "track_object", static_track)
+    results = dict((name, ok) for name, ok, _ in run_flow_probes(
+        require_bundled=True
+    ))
+    assert results.get("colour-track sample frames") is False

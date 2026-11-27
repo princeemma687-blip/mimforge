@@ -1149,8 +1149,15 @@ class MainWindow(QMainWindow):
         return "prototype"
 
     def show_design_section(self):
-        """Back from the BUILD IT player to the Design section."""
+        """Back from the BUILD IT player to the Design section.
+
+        The stack must be set explicitly, not only via the nav:
+        BUILD IT is launched FROM Design, so the nav row is usually
+        already on Design and setCurrentRow then fires no change --
+        the stack would stay on the assembly page and BACK would
+        look dead (retroactive audit finding, 2026-11-27)."""
         self.nav.setCurrentRow(SECTIONS.index("Design"))
+        self.stack.setCurrentWidget(self.design_panel)
 
     def show_assembly(self, narrate: bool = True):
         """BUILD IT: generate the coupling sequence for the

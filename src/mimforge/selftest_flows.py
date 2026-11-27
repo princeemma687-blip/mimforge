@@ -224,13 +224,28 @@ def _run(results, resources, require_bundled: bool) -> None:
         # -- colour-track a few frames of the swinging disc.
         try:
             track = track_object(clip, ColourPrompt(**_SAMPLE_PROMPT), stride=5)
-            ok = track.frames_tracked > 0 and track.coverage > 0.5
+            # Motion is part of the claim (retroactive audit,
+            # 2026-11-27): the clip that once passed this gate was
+            # STATIC -- the old tracker sat on the unmoving disc and
+            # reported full coverage. The gate itself now asserts
+            # the tracked object TRAVELS (the real disc crosses
+            # 160 px of the 320 px-wide frame; the floor is a
+            # quarter of that), so no future tracker change can
+            # re-admit a static lock silently.
+            travel_x = (
+                float(max(track.xs) - min(track.xs)) if len(track.xs) else 0.0
+            )
+            ok = (
+                track.frames_tracked > 0
+                and track.coverage > 0.5
+                and travel_x >= 40.0
+            )
             results.append(
                 (
                     "colour-track sample frames",
                     ok,
                     f"tracked {track.frames_tracked}/{track.frames_total} "
-                    f"examined frames",
+                    f"examined frames; travel {travel_x:.0f}px",
                 )
             )
             if not ok:
