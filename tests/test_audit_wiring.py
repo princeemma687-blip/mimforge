@@ -66,6 +66,31 @@ def check(control: str, ok: bool, evidence: str) -> None:
     verdict(control, "WIRED" if ok else "FRONT-ONLY", evidence)
 
 
+def _pixmap_bytes(pixmap) -> bytes:
+    """The raw bytes of a pixmap, for per-view frame comparison.
+
+    The QImage MUST be held in a named local while its bits are
+    read. ``QImage.bits()`` returns a memoryview that does NOT
+    keep the image alive (verified on PySide6 6.12: the view's
+    ``.obj`` is None -- it is a raw view over the image's heap
+    buffer). The one-liner ``pixmap.toImage().bits().tobytes()``
+    therefore copies from freed memory: the temporary QImage is
+    destroyed the moment ``.bits()`` returns, and for a large
+    grab the freed buffer's pages are unmapped, so the copy
+    access-violates. That is exactly how CI run 46033116678
+    died mid-enumeration (faulthandler: this file, the capture
+    expression in ``_finish_enumeration``) after the same test
+    had passed in run 45991918059 -- small grabs keep their
+    freed block mapped, so the bug hides until the grab is big
+    or the allocator is busy. Reproduced deterministically on
+    the dev VM: the one-liner segfaults on a 2400x1800 pixmap;
+    this helper returns the correct bytes. Holding the image
+    in a local keeps the buffer alive until the copy is done.
+    """
+    image = pixmap.toImage()
+    return image.bits().tobytes()
+
+
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
@@ -311,6 +336,23 @@ def test_line_a_full_control_enumeration(app, tmp_path, monkeypatch):
     )
     assert not FAILURES, "FRONT-ONLY controls found:\n" + "\n".join(FAILURES)
 
+    # Leave no native state behind for the tests that share this
+    # process (audit hygiene, probed 2026-11-27): without this,
+    # the window survives the test as a top-level widget and its
+    # two machine views keep LIVE MuJoCo renderers -- real GL
+    # contexts -- plus stopped QMediaPlayers, all leaking into
+    # every later test in the process. Release the renderers
+    # explicitly, then close and destroy the window.
+    from mimforge.ui.machine_view import MachineViewWidget
+
+    for view in window.findChildren(MachineViewWidget):
+        if view._renderer is not None:
+            view._renderer.close()
+            view._renderer = None
+    window.close()
+    window.deleteLater()
+    QApplication.processEvents()
+
 
 def _finish_enumeration(window, tmp_path, monkeypatch, backend, fake):
     pp = window.projects_panel
@@ -423,12 +465,12 @@ def _finish_enumeration(window, tmp_path, monkeypatch, backend, fake):
             # duality as the Gate probe _probe_machine_view.
             grabbed = sp.machine_view.canvas.grab()
             seen[name] = (
-                grabbed.toImage().bits().tobytes()
+                _pixmap_bytes(grabbed)
                 if not grabbed.isNull() else b""
             )
         else:
             pix = sp.machine_view.image_label.pixmap()
-            seen[name] = pix.toImage().bits().tobytes() if pix else b""
+            seen[name] = _pixmap_bytes(pix) if pix else b""
         ok = sp.machine_view.current_view == name
         if name == "internals":
             ok = ok and sp.machine_view.pages.currentIndex() == 2
@@ -731,8 +773,148 @@ def test_simulate_machine_views_differ_in_forced_fallback(
         assert sp.machine_view.pages.currentIndex() == 1
         grabbed = sp.machine_view.canvas.grab()
         assert not grabbed.isNull()
-        seen[name] = grabbed.toImage().bits().tobytes()
+        seen[name] = _pixmap_bytes(grabbed)
     assert len({seen["front"], seen["side"], seen["top"]}) == 3, (
         "front/side/top fallback drawings must differ per view"
     )
     window.close()
+
+
+# ------------------------------------------------------------ regression:
+# the mid-enumeration access violation (CI run 46033116678)
+
+_BROKEN_DRIVER_CHILD = r'''
+import os
+import sys
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+sys.path.insert(0, __SRC__)
+sys.path.insert(0, __TESTS__)
+
+from PySide6.QtWidgets import QApplication
+
+app = QApplication([])
+
+import mimforge.ui.machine_view as machine_view
+
+# The broken-driver world (the GitHub Windows runner): the GL
+# probe reports the renderer unavailable, and constructing one
+# is an error the widget must never even attempt.
+machine_view.renderer_available = lambda: False
+
+
+class _BrokenRenderer:
+    def __init__(self, *args, **kwargs):
+        raise AssertionError(
+            "renderer constructed in a broken-driver world"
+        )
+
+
+machine_view.MachineRenderer = _BrokenRenderer
+
+from mimforge.design import GantryParameters
+from mimforge.visuals import MachineTimeline
+from test_audit_wiring import _pixmap_bytes
+
+widget = machine_view.MachineViewWidget()
+widget.set_timeline(MachineTimeline.rest(GantryParameters()), "PROBE")
+widget.resize(1500, 1000)
+widget.show()
+app.processEvents()
+assert widget.using_fallback, "widget did not take the fallback"
+assert widget.pages.currentIndex() == 1, "canvas page not presented"
+
+mode = sys.argv[1]
+if mode == "legacy":
+    # The pre-fix capture pattern, isolated in this child: the
+    # temporary QImage dies at the end of the statement, its
+    # bits() memoryview dangles, and same-size poison allocations
+    # then reuse the heap. Reading the view must crash or read
+    # poison -- never silently produce the right bytes.
+    grabbed = widget.canvas.grab()
+    assert not grabbed.isNull()
+    expected = _pixmap_bytes(grabbed)
+    view = grabbed.toImage().bits()
+    poison = [bytes([0xAB]) * len(view) for _ in range(4)]
+    import gc
+
+    gc.collect()
+    data = view.tobytes()
+    if data == expected:
+        print("LEGACY PATTERN SURVIVED")
+        sys.exit(3)
+    print("LEGACY PATTERN CORRUPTED")
+    sys.exit(0)
+
+seen = {}
+for name in ("front", "side", "top"):
+    widget.view_buttons[name].click()
+    app.processEvents()
+    grabbed = widget.canvas.grab()
+    assert not grabbed.isNull()
+    seen[name] = _pixmap_bytes(grabbed)
+    assert len(seen[name]) >= 1_000_000, (name, len(seen[name]))
+assert len(set(seen.values())) == 3, "fallback views do not differ"
+print("BROKEN-DRIVER CAPTURE OK")
+'''
+
+
+def test_line_a_frame_capture_survives_broken_driver_world(tmp_path):
+    """Regression for CI run 46033116678 (2026-11-27): the Line A
+    enumeration died 2m33s into the suite with a Windows fatal
+    access violation at the Simulate machine-view capture --
+    ``pixmap.toImage().bits().tobytes()`` copies from freed
+    memory, because the temporary QImage is destroyed when
+    ``.bits()`` returns and the memoryview it hands back does
+    not keep the image alive. The same test had passed in run
+    45991918059: the bug hides whenever the freed block stays
+    mapped, and kills when the grab is large enough to unmap.
+
+    The capture now goes through ``_pixmap_bytes`` (the image
+    held in a named local). This test runs the broken-driver
+    world in a SUBPROCESS -- the Gate v2 pattern, so a native
+    crash in the child is a verdict here, never a dead suite:
+    the renderer probe reports unavailable AND renderer
+    construction is sabotaged to raise, the widget must take
+    the canvas fallback, and the three per-view captures must
+    be large (the unmapping size class) and differ. The
+    negative control runs the pre-fix pattern in its own
+    child, where it must crash or read poisoned heap -- if it
+    ever produced the right bytes undetected, this test fails,
+    in the audit's Line B style."""
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    child = tmp_path / "broken_driver_child.py"
+    child.write_text(
+        _BROKEN_DRIVER_CHILD
+        .replace("__SRC__", repr(str(root / "src")))
+        .replace("__TESTS__", repr(str(Path(__file__).resolve().parent))),
+        encoding="utf-8",
+    )
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+
+    def run(mode):
+        return subprocess.run(
+            [sys.executable, str(child), mode],
+            capture_output=True, text=True, timeout=300, env=env,
+        )
+
+    good = run("capture")
+    assert good.returncode == 0 and "BROKEN-DRIVER CAPTURE OK" in good.stdout, (
+        f"capture child rc={good.returncode}\n{good.stdout}\n"
+        f"{good.stderr[-2000:]}"
+    )
+    legacy = run("legacy")
+    assert legacy.returncode != 0 or "LEGACY PATTERN CORRUPTED" in legacy.stdout, (
+        "negative control failed: the dangling-bits pattern "
+        f"survived undetected (rc={legacy.returncode})\n"
+        f"{legacy.stdout}\n{legacy.stderr[-2000:]}"
+    )
+    verdict("Simulate · machine view capture (broken-driver world)",
+            "WIRED",
+            "subprocess: fallback taken, renderer never "
+            "constructed, three large per-view captures differ; "
+            "the pre-fix dangling-bits pattern crashes or reads "
+            "poison in its own child (negative control)")
