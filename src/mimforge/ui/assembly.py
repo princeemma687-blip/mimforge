@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..assembly import AssemblyPlan
+from ..tempdirs import TempDir
 from ..visuals import part_layout
 from .icons import make_icon
 from .main_window import ACCENT, MUTED, TEXT, mono_font
@@ -496,23 +497,39 @@ class AssemblyPlayer(QWidget):
 
     # --------------------------------------------------------------- audio
 
-    def _prepare_audio(self, plan: AssemblyPlan) -> None:
-        import tempfile
-        from pathlib import Path
-
-        if self._audio_dir is not None:
+    def _release_audio(self) -> None:
+        """Stop the narration player and let go of its files BEFORE
+        their folder is removed -- the lesson player's discipline
+        (see ui/playback.py): on Windows a WAV the media backend
+        still holds cannot be deleted (WinError 32 -- CI run
+        45991918059). Stop, clear the source, release the audio
+        output, then remove the folder through a cleanup that can
+        never raise. The output is re-attached on the next play."""
+        self._stop_media()
+        if self._media is not None:
             try:
-                self._audio_dir.cleanup()
+                self._media.setSource(QUrl())
             except Exception:
                 pass
+            try:
+                self._media.setAudioOutput(None)
+            except Exception:
+                pass
+        if self._audio_dir is not None:
+            self._audio_dir.cleanup()
             self._audio_dir = None
         self._audio_files = {}
+
+    def _prepare_audio(self, plan: AssemblyPlan) -> None:
+        from pathlib import Path
+
+        self._release_audio()
         if not any(
             getattr(step, "audio", None) and step.audio.data_b64
             for step in plan.steps
         ):
             return
-        self._audio_dir = tempfile.TemporaryDirectory(
+        self._audio_dir = TempDir(
             prefix="mimforge-assembly-"
         )
         root = Path(self._audio_dir.name)
@@ -534,6 +551,11 @@ class AssemblyPlayer(QWidget):
             if target is None:
                 self._media.stop()
                 return
+            if (
+                self._audio_out is not None
+                and self._media.audioOutput() is not self._audio_out
+            ):
+                self._media.setAudioOutput(self._audio_out)
             self._media.setSource(QUrl.fromLocalFile(str(target)))
             self._media.play()
         except Exception:

@@ -413,8 +413,22 @@ def _finish_enumeration(window, tmp_path, monkeypatch, backend, fake):
     seen = {}
     for name in ("front", "side", "top", "internals"):
         sp.machine_view.view_buttons[name].click()
-        pix = sp.machine_view.image_label.pixmap()
-        seen[name] = pix.toImage().bits().tobytes() if pix else b""
+        QApplication.processEvents()
+        if sp.machine_view.using_fallback:
+            # No GL on this machine (the GitHub Windows runner --
+            # CI run 45991918059): the designed canvas fallback is
+            # the presented surface, so the per-view evidence is
+            # the canvas's own drawing, not the render label (which
+            # legitimately holds no pixmap in this mode). Same
+            # duality as the Gate probe _probe_machine_view.
+            grabbed = sp.machine_view.canvas.grab()
+            seen[name] = (
+                grabbed.toImage().bits().tobytes()
+                if not grabbed.isNull() else b""
+            )
+        else:
+            pix = sp.machine_view.image_label.pixmap()
+            seen[name] = pix.toImage().bits().tobytes() if pix else b""
         ok = sp.machine_view.current_view == name
         if name == "internals":
             ok = ok and sp.machine_view.pages.currentIndex() == 2
@@ -682,3 +696,43 @@ def test_line_a_no_project_clicks_are_guarded_not_fake(app, tmp_path, monkeypatc
             "GUARDED",
             "clicks with no project refuse plainly or no-op safely; "
             "nothing fake-fired")
+
+
+def test_simulate_machine_views_differ_in_forced_fallback(
+    app, tmp_path, monkeypatch
+):
+    """RC3 (CI run 45991918059): with GL unavailable -- the GitHub
+    Windows runner, whose WGL driver has no OpenGL -- the Simulate
+    machine view must still present three DIFFERENT front/side/top
+    views, drawn by the designed canvas fallback. This exercises
+    the fallback branch of the enumeration's per-view capture on a
+    machine where GL works, by forcing the renderer probe off."""
+    monkeypatch.setattr(
+        "mimforge.ui.machine_view.renderer_available", lambda: False
+    )
+    fake = FakeFirebase()
+    backend = MemoryBackend()
+    window = _window(
+        tmp_path, fake=fake,
+        sync_backend_factory=lambda cfg: backend,
+    )
+    window.transcriber = _StubTranscriber()
+    _create_via_clicks(window)
+    _goto(window, "Simulate")
+    window.show()
+    QApplication.processEvents()
+    sp = window.simulate_panel
+    assert sp.machine_view.using_fallback
+    seen = {}
+    for name in ("front", "side", "top"):
+        sp.machine_view.view_buttons[name].click()
+        QApplication.processEvents()
+        assert sp.machine_view.current_view == name
+        assert sp.machine_view.pages.currentIndex() == 1
+        grabbed = sp.machine_view.canvas.grab()
+        assert not grabbed.isNull()
+        seen[name] = grabbed.toImage().bits().tobytes()
+    assert len({seen["front"], seen["side"], seen["top"]}) == 3, (
+        "front/side/top fallback drawings must differ per view"
+    )
+    window.close()

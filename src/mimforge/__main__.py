@@ -57,6 +57,7 @@ SELF_TEST_MODULES = [
     "mimforge.structuring",
     "mimforge.sync",
     "mimforge.templates",
+    "mimforge.tempdirs",
     "mimforge.verification",
     "mimforge.ui",
     "mimforge.ui.assembly",

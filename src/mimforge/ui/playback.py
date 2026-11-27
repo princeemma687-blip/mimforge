@@ -56,6 +56,7 @@ from ..playback import (
     LessonPackage,
     LessonTable,
 )
+from ..tempdirs import TempDir
 from ..visuals import MachineTimeline
 from .icons import make_icon
 from .machine_view import MachineViewWidget
@@ -550,7 +551,7 @@ class LessonPlayer(QWidget):
         # audio is an enhancement, never a dependency.
         self._media: QMediaPlayer | None = None
         self._audio_out: QAudioOutput | None = None
-        self._audio_dir = None  # tempfile.TemporaryDirectory
+        self._audio_dir = None  # tempdirs.TempDir
         self._audio_files: dict[int, object] = {}
         self._audio_step: int | None = None
         try:
@@ -894,24 +895,41 @@ class LessonPlayer(QWidget):
 
     # ------------------------------------------------------ narration audio
 
+    def _release_audio(self) -> None:
+        """Stop the narration player and let go of its files BEFORE
+        their folder is removed. On Windows a WAV the media backend
+        still holds cannot be deleted (WinError 32 -- CI run
+        45991918059, where the removal raised out of tempfile's
+        exit-time cleanup): stop, clear the source, release the
+        audio output, and only then remove the folder, through a
+        cleanup that retries briefly and can never raise. The
+        audio output is re-attached on the next play."""
+        self._stop_media()
+        if self._media is not None:
+            try:
+                self._media.setSource(QUrl())
+            except Exception:
+                pass
+            try:
+                self._media.setAudioOutput(None)
+            except Exception:
+                pass
+        if self._audio_dir is not None:
+            self._audio_dir.cleanup()
+            self._audio_dir = None
+        self._audio_files = {}
+        self._audio_step = None
+
     def _prepare_audio(self, lesson: LessonPackage) -> None:
         """Write each step's narration WAV to a temp folder the
         media player can stream from. Steps without audio simply
         have no file -- playback stays silent for them."""
-        import tempfile
         from pathlib import Path
 
-        if self._audio_dir is not None:
-            try:
-                self._audio_dir.cleanup()
-            except Exception:
-                pass
-            self._audio_dir = None
-        self._audio_files = {}
-        self._audio_step = None
+        self._release_audio()
         if not any(step.audio and step.audio.data_b64 for step in lesson.steps):
             return
-        self._audio_dir = tempfile.TemporaryDirectory(prefix="mimforge-voice-")
+        self._audio_dir = TempDir(prefix="mimforge-voice-")
         root = Path(self._audio_dir.name)
         for index, step in enumerate(lesson.steps):
             if step.audio and step.audio.data_b64:
@@ -931,6 +949,11 @@ class LessonPlayer(QWidget):
                 self._media.stop()
                 self._audio_step = None
                 return
+            if (
+                self._audio_out is not None
+                and self._media.audioOutput() is not self._audio_out
+            ):
+                self._media.setAudioOutput(self._audio_out)
             self._media.setSource(QUrl.fromLocalFile(str(target)))
             self._media.play()
             self._audio_step = index

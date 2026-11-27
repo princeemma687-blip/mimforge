@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -73,6 +74,21 @@ class Project:
     title: str
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
     media: dict[str, str] = field(default_factory=dict)  # rel path -> sha256
+    closed: bool = field(default=False, compare=False, repr=False)
+
+    def close(self) -> None:
+        """Mark the project closed (idempotent).
+
+        Storage connections are transient and closed
+        deterministically by every operation (see ``_write_db``
+        and ``open_project``), so closing is a lifecycle promise,
+        not a handle release: after ``close()``, ``save()``
+        refuses. Owners that create throwaway projects (probes,
+        tests) close them in a ``finally`` so the discipline is
+        explicit at the call site -- on Windows an unclosed store
+        is a locked ``project.db`` (WinError 32, CI run
+        45991918059)."""
+        self.closed = True
 
     # -- records ---------------------------------------------------------
     def put_record(self, kind: str, record_id: str, payload: dict[str, Any]) -> None:
@@ -145,6 +161,8 @@ class Project:
         A damaged database file surfaces as ProjectError (the
         shell's plain-refusal type), never as a raw sqlite error
         escaping through a click handler."""
+        if self.closed:
+            raise ProjectError(f"project is closed: {self.project_id}")
         digest = self.content_hash()
         db_path = self.root / DB_NAME
         try:
@@ -166,7 +184,13 @@ class Project:
         return digest
 
     def _write_db(self, db_path: Path) -> None:
-        with sqlite3.connect(db_path) as conn:
+        # ``closing`` + the transaction block: the connection is
+        # CLOSED deterministically when this returns. A bare
+        # ``with sqlite3.connect(...)`` commits but never closes,
+        # leaving the handle to the garbage collector -- and on
+        # Windows a still-open project.db cannot be deleted
+        # (WinError 32).
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
             )
@@ -246,7 +270,10 @@ def open_project(base_dir: str | Path, project_id: str) -> Project:
     records: dict[str, dict[str, Any]] = {}
     title = ""
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        # Closed deterministically, like _write_db: see there.
+        with closing(
+            sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        ) as conn:
             for key, value in conn.execute("SELECT key, value FROM meta"):
                 if key == "title":
                     title = value

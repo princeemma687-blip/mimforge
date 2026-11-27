@@ -106,6 +106,7 @@ hiddenimports = [
     "mimforge.structuring",
     "mimforge.sync",
     "mimforge.templates",
+    "mimforge.tempdirs",
     "mimforge.verification",
     "mimforge.ui.assembly",
     "mimforge.ui.authoring",

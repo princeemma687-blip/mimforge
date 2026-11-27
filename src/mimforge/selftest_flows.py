@@ -886,95 +886,105 @@ def _probe_episodes(results) -> None:
 
         with tempfile.TemporaryDirectory(prefix="mimforge-episodes-") as tmp:
             base = Path(tmp) / "projects"
-            project = create_project(base, "probe", "Probe")
-            episode_set = DemonstrationSet()
-            episode_set.add(
-                new_episode(
-                    episode_set,
-                    source_name="first-recording.mp4",
-                    tracker="colour",
-                    coverage=0.944,
-                    period_s=1.902,
-                )
-            )
-            episode_set.add(
-                new_episode(
-                    episode_set,
-                    source_name="second-recording.mp4",
-                    tracker="colour",
-                    coverage=0.81,
-                    period_s=None,
-                )
-            )
-            episode_set.set_verdict(1, "approved", by="Probe Teacher")
-            project.put_record(
-                "demonstration", "episode-1", {"source_name": "first-recording.mp4"}
-            )
-            project.put_record(
-                "demonstration",
-                "episode-2",
-                {"source_name": "second-recording.mp4"},
-            )
-            save_demonstration_set(project, episode_set)
-            project.save()
-            reopened = open_project(base, "probe")
-            loaded = demonstration_set(reopened)
-            first = loaded.get(1)
-            second = loaded.get(2)
-            ok = (
-                loaded.next_number() == 3
-                and first is not None
-                and first.coverage == 0.944
-                and first.period_s == 1.902
-                and first.verdict == "approved"
-                and first.verdict_by == "Probe Teacher"
-                and second is not None
-                and second.coverage == 0.81
-                and second.period_s is None
-                and second.verdict == "not-set"
-                and loaded.missing_demonstrations(
-                    reopened.list_records("demonstration")
-                )
-                == []
-            )
-            detail = (
-                f"episodes={len(loaded.episodes)}, "
-                f"next={loaded.next_number()}, "
-                f"episode 1 coverage={first.coverage if first else None}, "
-                f"period={first.period_s if first else None}, "
-                f"verdict={first.verdict if first else None}"
-            )
-            duplicate_refused = False
+            project = reopened = again = None
             try:
-                from .episodes import Episode
+                project = create_project(base, "probe", "Probe")
+                episode_set = DemonstrationSet()
+                episode_set.add(
+                    new_episode(
+                        episode_set,
+                        source_name="first-recording.mp4",
+                        tracker="colour",
+                        coverage=0.944,
+                        period_s=1.902,
+                    )
+                )
+                episode_set.add(
+                    new_episode(
+                        episode_set,
+                        source_name="second-recording.mp4",
+                        tracker="colour",
+                        coverage=0.81,
+                        period_s=None,
+                    )
+                )
+                episode_set.set_verdict(1, "approved", by="Probe Teacher")
+                project.put_record(
+                    "demonstration", "episode-1", {"source_name": "first-recording.mp4"}
+                )
+                project.put_record(
+                    "demonstration",
+                    "episode-2",
+                    {"source_name": "second-recording.mp4"},
+                )
+                save_demonstration_set(project, episode_set)
+                project.save()
+                reopened = open_project(base, "probe")
+                loaded = demonstration_set(reopened)
+                first = loaded.get(1)
+                second = loaded.get(2)
+                ok = (
+                    loaded.next_number() == 3
+                    and first is not None
+                    and first.coverage == 0.944
+                    and first.period_s == 1.902
+                    and first.verdict == "approved"
+                    and first.verdict_by == "Probe Teacher"
+                    and second is not None
+                    and second.coverage == 0.81
+                    and second.period_s is None
+                    and second.verdict == "not-set"
+                    and loaded.missing_demonstrations(
+                        reopened.list_records("demonstration")
+                    )
+                    == []
+                )
+                detail = (
+                    f"episodes={len(loaded.episodes)}, "
+                    f"next={loaded.next_number()}, "
+                    f"episode 1 coverage={first.coverage if first else None}, "
+                    f"period={first.period_s if first else None}, "
+                    f"verdict={first.verdict if first else None}"
+                )
+                duplicate_refused = False
+                try:
+                    from .episodes import Episode
 
-                loaded.add(Episode(number=1, demonstration_id="episode-1"))
-            except EpisodeError:
-                duplicate_refused = True
-            corrupt_refused = False
-            try:
-                DemonstrationSet.from_dict({"version": 99, "episodes": []})
-            except EpisodeError:
-                corrupt_refused = True
-            reopened.delete_record("demonstration", "episode-2")
-            reopened.save()
-            again = open_project(base, "probe")
-            reloaded = demonstration_set(again)
-            missing = reloaded.missing_demonstrations(
-                again.list_records("demonstration")
-            )
-            ok = (
-                ok
-                and duplicate_refused
-                and corrupt_refused
-                and missing == [2]
-                and reloaded.get(2) is not None
-            )
-            detail += (
-                f"; duplicate refused: {duplicate_refused}; "
-                f"corrupt refused: {corrupt_refused}; "
-                f"deleted demonstration flagged missing: {missing}"
-            )
+                    loaded.add(Episode(number=1, demonstration_id="episode-1"))
+                except EpisodeError:
+                    duplicate_refused = True
+                corrupt_refused = False
+                try:
+                    DemonstrationSet.from_dict({"version": 99, "episodes": []})
+                except EpisodeError:
+                    corrupt_refused = True
+                reopened.delete_record("demonstration", "episode-2")
+                reopened.save()
+                again = open_project(base, "probe")
+                reloaded = demonstration_set(again)
+                missing = reloaded.missing_demonstrations(
+                    again.list_records("demonstration")
+                )
+                ok = (
+                    ok
+                    and duplicate_refused
+                    and corrupt_refused
+                    and missing == [2]
+                    and reloaded.get(2) is not None
+                )
+                detail += (
+                    f"; duplicate refused: {duplicate_refused}; "
+                    f"corrupt refused: {corrupt_refused}; "
+                    f"deleted demonstration flagged missing: {missing}"
+                )
+            finally:
+                # Every store the probe opened is closed
+                # BEFORE the temp tree is deleted: on Windows
+                # an open project.db cannot be unlinked
+                # (WinError 32 -- CI run 45991918059).
+                for owned in (project, reopened, again):
+                    if owned is not None:
+                        owned.close()
         results.append(("episode set round trip", ok, detail))
     except Exception as exc:  # noqa: BLE001
         results.append(

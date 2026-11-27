@@ -278,26 +278,74 @@ def test_readings_table_sizes_columns_to_content(app, lesson):
     player.close()
 
 
+def _assert_machine_frame_fills(player):
+    """The machine frame fills its view, in whichever rendering
+    mode this machine can actually produce -- the duality the
+    Gate probe ``_probe_machine_view`` already uses. GL live: the
+    rendered pixmap tracks the label's size (the assertions below
+    are the original Stage 4 ones, unchanged). GL unavailable --
+    the GitHub Windows runner, whose WGL driver has no OpenGL
+    (CI run 45991918059) -- the designed canvas fallback IS the
+    view: its page must be the presented one, it must fill the
+    area the layout gave it, and it must draw a real scene."""
+    from PySide6.QtTest import QTest
+
+    _show_at(player, 1200, 800)
+    assert player.machine_view.image_label.hasScaledContents()
+    QTest.qWait(100)  # let the deferred re-render run
+    QApplication.processEvents()
+    view = player.machine_view
+    label = view.image_label
+    pixmap = label.pixmap()
+    if not view.using_fallback and pixmap is not None \
+            and not pixmap.isNull():
+        # The adaptive ladder may halve the resolution on a slow
+        # machine, so the bar is "near the label size", not exact.
+        assert pixmap.width() >= label.width() * 0.4
+        assert pixmap.height() >= label.height() * 0.4
+        return
+    # Fallback branch: the canvas page is on screen, sized by the
+    # layout, and painting a scene (not a blank field).
+    assert view.using_fallback
+    assert view.pages.currentIndex() == 1
+    canvas = view.canvas
+    assert canvas.width() > 0 and canvas.height() > 0
+    grab = canvas.grab()
+    assert not grab.isNull()
+    assert grab.width() == canvas.width()
+    assert grab.height() == canvas.height()
+    image = grab.toImage()
+    colours = {
+        image.pixel(x, y)
+        for x in range(0, image.width(), 7)
+        for y in range(0, image.height(), 7)
+    }
+    assert len(colours) > 6
+
+
 def test_machine_frame_fills_its_view(app, lesson):
     """The rendered frame tracks the view's size: after a resize
     settles, the picture is rendered at (or near) the label's size
     instead of sitting as a small stamp, and the label scales its
     pixmap to fill."""
-    from PySide6.QtTest import QTest
-
     player = LessonPlayer()
     player.load_lesson(lesson)
-    _show_at(player, 1200, 800)
-    assert player.machine_view.image_label.hasScaledContents()
-    QTest.qWait(100)  # let the deferred re-render run
-    QApplication.processEvents()
-    label = player.machine_view.image_label
-    pixmap = label.pixmap()
-    assert pixmap is not None and not pixmap.isNull()
-    # The adaptive ladder may halve the resolution on a slow
-    # machine, so the bar is "near the label size", not exact.
-    assert pixmap.width() >= label.width() * 0.4
-    assert pixmap.height() >= label.height() * 0.4
+    _assert_machine_frame_fills(player)
+    player.close()
+
+
+def test_machine_frame_fills_its_view_fallback_forced(app, lesson,
+                                                      monkeypatch):
+    """GL forced unavailable (the CI runner's world): the same
+    fill guarantee must hold through the designed canvas
+    fallback, exercised branch-for-branch."""
+    monkeypatch.setattr(
+        "mimforge.ui.machine_view.renderer_available", lambda: False
+    )
+    player = LessonPlayer()
+    player.load_lesson(lesson)
+    assert player.machine_view.using_fallback
+    _assert_machine_frame_fills(player)
     player.close()
 
 
