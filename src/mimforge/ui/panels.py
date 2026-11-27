@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtCore import QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .drawings import PanelLayoutView, WiringView
+from .icons import make_icon
 from .main_window import (
     ACCENT,
     MUTED,
@@ -447,7 +448,14 @@ class GantryElevationView(QWidget):
         margin_l, margin_r, margin_t, margin_b = 34, 52, 16, 30
         avail_w = max(self.width() - margin_l - margin_r, 10)
         avail_h = max(self.height() - margin_t - margin_b, 10)
-        scale = min(avail_w / span, avail_h / height)
+        # The drawn world is wider than the machine: the robot
+        # teacher stands at its station to the right, drawn to
+        # the same scale, with its own height dimension.
+        from ..visuals import robot_layout, robot_state_default
+
+        robot = robot_layout(params)
+        world_w = span + (robot.station_x_m * 1000.0 - span / 2) + 190.0
+        scale = min(avail_w / world_w, avail_h / height)
         x0, y_base = margin_l, margin_t + height * scale
         x1 = x0 + span * scale
         y_top = margin_t
@@ -514,6 +522,23 @@ class GantryElevationView(QWidget):
         painter.drawEllipse(int(mass_x) - 10, int(mass_y) - 10, 20, 20)
         painter.setBrush(QColor(ACCENT))
         painter.drawEllipse(int(mass_x) - 5, int(mass_y) - 5, 10, 10)
+        # The robot teacher at its station, to the same scale --
+        # the design drawing shows the whole teaching machine:
+        # the apparatus and the robot that operates it.
+        from .machine_view import draw_robot_figure
+
+        centre_x = (x0 + x1) / 2
+
+        def robot_px(v_m: float) -> float:
+            return centre_x + v_m * 1000.0 * scale
+
+        def robot_py(v_m: float) -> float:
+            return y_base - v_m * 1000.0 * scale
+
+        draw_robot_figure(
+            painter, robot, robot_state_default(params),
+            "front", robot_px, robot_py,
+        )
         # Dimension lines: span along the bottom, height at the right.
         painter.setPen(pen(MUTED, 1))
         dim_y = int(y_base) + 22
@@ -534,6 +559,23 @@ class GantryElevationView(QWidget):
         painter.translate(dim_x + 12, int((y_top + y_base) / 2))
         painter.rotate(-90)
         painter.drawText(-30, 0, 60, 12, Qt.AlignCenter, f"{height:.0f}")
+        painter.restore()
+        # The robot's own height dimension, at its station.
+        robot_top_y = robot_py(robot.height_m)
+        robot_dim_x = int(robot_px(robot.station_x_m + 0.10))
+        painter.setPen(pen(MUTED, 1))
+        painter.drawLine(robot_dim_x, int(robot_top_y), robot_dim_x, int(y_base))
+        painter.drawLine(robot_dim_x - 4, int(robot_top_y),
+                         robot_dim_x + 4, int(robot_top_y))
+        painter.drawLine(robot_dim_x - 4, int(y_base),
+                         robot_dim_x + 4, int(y_base))
+        painter.save()
+        painter.translate(robot_dim_x + 12, int((robot_top_y + y_base) / 2))
+        painter.rotate(-90)
+        painter.drawText(
+            -40, 0, 80, 12, Qt.AlignCenter,
+            f"ROBOT {robot.height_m * 1000.0:.0f}",
+        )
         painter.restore()
 
 
@@ -589,6 +631,8 @@ class DesignPanel(QWidget):
             "▶  BUILD IT — STEP-BY-STEP COUPLING"
         )
         self.build_it_button.setFont(mono_font(11, bold=True))
+        self.build_it_button.setIcon(make_icon("build", 20))
+        self.build_it_button.setIconSize(QSize(20, 20))
         self.build_it_button.clicked.connect(
             lambda: self.host.show_assembly()
             if self.host is not None
@@ -642,6 +686,8 @@ class DesignPanel(QWidget):
         export_row = QHBoxLayout()
         self.export_step_button = QPushButton("⬆  EXPORT STEP")
         self.export_step_button.setFont(mono_font(10, bold=True))
+        self.export_step_button.setIcon(make_icon("export", 18))
+        self.export_step_button.setIconSize(QSize(18, 18))
         self.export_step_button.clicked.connect(
             lambda: self.host.export_cad("step")
             if self.host is not None
@@ -650,6 +696,8 @@ class DesignPanel(QWidget):
         export_row.addWidget(self.export_step_button)
         self.export_stl_button = QPushButton("⬆  EXPORT STL")
         self.export_stl_button.setFont(mono_font(10, bold=True))
+        self.export_stl_button.setIcon(make_icon("export", 18))
+        self.export_stl_button.setIconSize(QSize(18, 18))
         self.export_stl_button.clicked.connect(
             lambda: self.host.export_cad("stl")
             if self.host is not None
@@ -884,16 +932,22 @@ class SimulatePanel(QWidget):
         layout.addWidget(self.project_label)
         self.run_button = QPushButton("▶  RUN VERIFICATION")
         self.run_button.setFont(mono_font(11, bold=True))
+        self.run_button.setIcon(make_icon("play", 20))
+        self.run_button.setIconSize(QSize(20, 20))
         self.run_button.clicked.connect(lambda: self.host.run_verification())
         layout.addWidget(self.run_button)
         self.adjust_button = QPushButton("⚙  AUTO-ADJUST")
         self.adjust_button.setFont(mono_font(10, bold=True))
+        self.adjust_button.setIcon(make_icon("gear", 18))
+        self.adjust_button.setIconSize(QSize(18, 18))
         self.adjust_button.clicked.connect(
             lambda: self.host.run_auto_adjust()
         )
         layout.addWidget(self.adjust_button)
         self.replay_button = QPushButton("▶  RUN TRAJECTORY REPLAY")
         self.replay_button.setFont(mono_font(10, bold=True))
+        self.replay_button.setIcon(make_icon("play", 18))
+        self.replay_button.setIconSize(QSize(18, 18))
         self.replay_button.clicked.connect(
             lambda: self.host.run_trajectory_replay()
         )
@@ -1057,6 +1111,14 @@ class SimulatePanel(QWidget):
             self._render_outcome(outcome, 1.0)
 
     def _anim_tick(self) -> None:
+        if not motion_enabled():
+            # Motion reduced mid-sweep: draw the final state at
+            # once -- motion is consulted on every tick, as the
+            # Playback sample's sweeps do.
+            self._anim_timer.stop()
+            self.graph.set_progress(1.0)
+            self._render_outcome(self._anim_outcome, 1.0)
+            return
         self._anim_step += 1
         fraction = min(1.0, self._anim_step / 22)  # ~0.9 s sweep
         eased = 1.0 - (1.0 - fraction) ** 3

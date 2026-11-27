@@ -52,6 +52,12 @@ class LessonStep:
     check_question: str = ""
     safety_notes: list[str] = field(default_factory=list)
     duration_s: Optional[float] = None
+    #: The step's motion primitives, as generic type names from
+    #: the template (reach / grasp / release / read / ...) -- the
+    #: robot teacher's cue sheet: the player turns them into the
+    #: machine timeline's action segments, so the robot performs
+    #: the step it narrates. Data only; no apparatus named.
+    motion_primitives: list[str] = field(default_factory=list)
     #: Narration audio rendered at lesson build time (Stage 2), or
     #: None -- a step without audio still plays, silently, with its
     #: text visible. The audio carries its own plain-words label
@@ -67,6 +73,7 @@ class LessonStep:
             "check_question": self.check_question,
             "safety_notes": list(self.safety_notes),
             "duration_s": self.duration_s,
+            "motion_primitives": list(self.motion_primitives),
             "audio": self.audio.to_dict() if self.audio else None,
         }
 
@@ -80,6 +87,7 @@ class LessonStep:
             check_question=data.get("check_question", ""),
             safety_notes=list(data.get("safety_notes", [])),
             duration_s=data.get("duration_s"),
+            motion_primitives=list(data.get("motion_primitives", [])),
             audio=StepAudio.from_dict(data.get("audio")),
         )
 
@@ -344,6 +352,9 @@ def build_lesson(
             check_question=s.check_question,
             safety_notes=list(s.safety_notes),
             duration_s=s.duration_hint_s,
+            motion_primitives=[
+                p.type.value for p in s.motion_primitives
+            ],
         )
         for s in sorted(template.steps, key=lambda s: s.order)
     ]

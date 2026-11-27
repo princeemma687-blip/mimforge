@@ -136,7 +136,13 @@ def _drawn_pixels(pixmap) -> int:
 
 
 def test_icon_paths_exist_for_all_transport_names():
-    assert set(ICON_NAMES) == {"play", "pause", "stop", "export"}
+    # The Stage 4 sample shipped the transport four; the full
+    # pass extends the same set to every panel's actions.
+    assert set(ICON_NAMES) == {
+        "play", "pause", "stop", "export",
+        "import", "file", "attach", "record", "check", "cross",
+        "build", "sign", "gear", "back", "prev", "next", "reset", "doc",
+    }
     for name in ICON_NAMES:
         path = icon_path(name)
         assert not path.isEmpty()

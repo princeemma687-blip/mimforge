@@ -10,7 +10,7 @@ caller persists it (e.g. as a project record) via ``current_draft()``.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -24,7 +24,16 @@ from PySide6.QtWidgets import (
 )
 
 from ..structuring import AuthoringDraft
-from .main_window import ACCENT, MONO_FAMILY, MUTED, PANEL_BG, TEXT, mono_font
+from .icons import make_icon
+from .main_window import (
+    ACCENT,
+    MONO_FAMILY,
+    MUTED,
+    PANEL_BG,
+    TEXT,
+    mono_font,
+    prose_font,
+)
 
 
 class AuthoringPanel(QWidget):
@@ -83,10 +92,14 @@ class AuthoringPanel(QWidget):
         import_row.addWidget(self.tracker_combo)
         self.import_button = QPushButton("⇓  IMPORT DEMONSTRATION VIDEO")
         self.import_button.setFont(mono_font(10, bold=True))
+        self.import_button.setIcon(make_icon("import", 18))
+        self.import_button.setIconSize(QSize(18, 18))
         self.import_button.clicked.connect(self.import_requested.emit)
         import_row.addWidget(self.import_button)
         self.transcript_button = QPushButton("⇓  USE A TRANSCRIPT FILE")
         self.transcript_button.setFont(mono_font(10, bold=True))
+        self.transcript_button.setIcon(make_icon("file", 18))
+        self.transcript_button.setIconSize(QSize(18, 18))
         self.transcript_button.clicked.connect(
             self.transcript_requested.emit
         )
@@ -107,7 +120,7 @@ class AuthoringPanel(QWidget):
 
         right = QVBoxLayout()
         self.step_title = QLabel("No step selected.")
-        self.step_title.setFont(mono_font(11, bold=True))
+        self.step_title.setFont(prose_font(11, bold=True))
         right.addWidget(self.step_title)
 
         self.meta_label = QLabel("")
@@ -116,13 +129,16 @@ class AuthoringPanel(QWidget):
         right.addWidget(self.meta_label)
 
         self.editor = QPlainTextEdit()
-        self.editor.setFont(mono_font(10))
+        # The draft wording is prose -- the words the lesson will
+        # speak -- so it reads in the grotesque, per the type
+        # audit; the readouts around it stay mono.
+        self.editor.setFont(prose_font(10))
         self.editor.setPlaceholderText("Draft wording — edit freely.")
         self.editor.textChanged.connect(self._on_text_changed)
         right.addWidget(self.editor, stretch=1)
 
         self.check_label = QLabel("")
-        self.check_label.setFont(mono_font(9))
+        self.check_label.setFont(prose_font(9))
         self.check_label.setStyleSheet(f"color: {MUTED};")
         self.check_label.setWordWrap(True)
         right.addWidget(self.check_label)
@@ -136,16 +152,22 @@ class AuthoringPanel(QWidget):
         voice_row = QHBoxLayout()
         self.voice_attach_button = QPushButton("⇓  ATTACH MY VOICE FILE")
         self.voice_attach_button.setFont(mono_font(10, bold=True))
+        self.voice_attach_button.setIcon(make_icon("attach", 18))
+        self.voice_attach_button.setIconSize(QSize(18, 18))
         self.voice_attach_button.clicked.connect(
             self.voice_attach_requested.emit
         )
         self.voice_record_button = QPushButton("●  RECORD MY VOICE")
         self.voice_record_button.setFont(mono_font(10, bold=True))
+        self.voice_record_button.setIcon(make_icon("record", 18))
+        self.voice_record_button.setIconSize(QSize(18, 18))
         self.voice_record_button.clicked.connect(
             self.voice_record_requested.emit
         )
         self.voice_remove_button = QPushButton("✕  REMOVE MY VOICE")
         self.voice_remove_button.setFont(mono_font(10, bold=True))
+        self.voice_remove_button.setIcon(make_icon("cross", 18))
+        self.voice_remove_button.setIconSize(QSize(18, 18))
         self.voice_remove_button.clicked.connect(
             self.voice_remove_requested.emit
         )
@@ -157,12 +179,18 @@ class AuthoringPanel(QWidget):
         buttons = QHBoxLayout()
         self.approve_button = QPushButton("✓  APPROVE STEP")
         self.approve_button.setFont(mono_font(10, bold=True))
+        self.approve_button.setIcon(make_icon("check", 18))
+        self.approve_button.setIconSize(QSize(18, 18))
         self.approve_button.clicked.connect(self._approve)
         self.reject_button = QPushButton("✕  REJECT STEP")
         self.reject_button.setFont(mono_font(10, bold=True))
+        self.reject_button.setIcon(make_icon("cross", 18))
+        self.reject_button.setIconSize(QSize(18, 18))
         self.reject_button.clicked.connect(self._reject)
         self.build_lesson_button = QPushButton("▣  BUILD LESSON")
         self.build_lesson_button.setFont(mono_font(10, bold=True))
+        self.build_lesson_button.setIcon(make_icon("build", 18))
+        self.build_lesson_button.setIconSize(QSize(18, 18))
         self.build_lesson_button.clicked.connect(
             self.build_lesson_requested.emit
         )
@@ -221,6 +249,9 @@ class AuthoringPanel(QWidget):
     def set_recording(self, active: bool) -> None:
         self.voice_record_button.setText(
             "■  STOP RECORDING" if active else "●  RECORD MY VOICE"
+        )
+        self.voice_record_button.setIcon(
+            make_icon("stop" if active else "record", 18)
         )
 
     def show_import_status(self, text: str) -> None:

@@ -42,14 +42,140 @@ from ..visuals import (
     MachineRenderer,
     MachineState,
     MachineTimeline,
+    RobotLayout,
+    RobotState,
     part_layout,
     renderer_available,
+    robot_layout,
+    robot_outline,
 )
 from .main_window import ACCENT, MUTED, TEXT, mono_font
 
 _PAGE_RENDER, _PAGE_CANVAS, _PAGE_INTERNALS = 0, 1, 2
 _SCALE_STEPS = (1.0, 0.8, 0.66, 0.5)
 _MAX_W, _MAX_H = 960, 720
+
+_ROBOT_STEEL = "#8a929a"
+_ROBOT_GRIP = "#d94d33"
+
+
+def draw_robot_figure(
+    painter: QPainter,
+    layout: RobotLayout,
+    pose: RobotState,
+    plane: str,
+    px,
+    py,
+) -> None:
+    """Draw the robot teacher in one orthographic plane.
+
+    ``px`` / ``py`` map world metres to pixels for the plane's
+    (horizontal, vertical) axes -- front (x, z), side (y, z),
+    top (x, y). One figure everywhere: the body from the shared
+    outline geometry (``visuals.robot_outline``), the arm as the
+    solved shoulder-elbow-hand polyline, the gripper as two
+    prongs whose spread is the pose's grip. The Design elevation
+    and the BUILD IT canvas draw through this same function, so
+    the robot the student meets is the same robot in every view.
+    """
+    steel = QPen(QColor(_ROBOT_STEEL))
+    steel.setWidth(2)
+    accent = QPen(QColor(ACCENT))
+    accent.setWidth(2)
+    grip_pen = QPen(QColor(_ROBOT_GRIP))
+    grip_pen.setWidth(2)
+
+    def rect(cx: float, cz: float, w: float, h: float) -> None:
+        painter.setPen(steel)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(
+            int(px(cx - w / 2)), int(py(cz + h / 2)),
+            max(int(w * abs(px(1.0) - px(0.0))), 2),
+            max(int(h * abs(py(0.0) - py(1.0))), 2),
+        )
+
+    if plane == "front":
+        outline = robot_outline(layout, pose)
+        for cx, cz, w, h, _kind in outline["rects"]:
+            rect(cx, cz, w, h)
+        vx, vz, vw, vh = outline["visor"]
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(ACCENT))
+        painter.drawRect(
+            int(px(vx - vw / 2)), int(py(vz + vh / 2)),
+            max(int(vw * abs(px(1.0) - px(0.0))), 2),
+            max(int(vh * abs(py(0.0) - py(1.0))), 1),
+        )
+        arm = outline["arm"]
+        gripper = outline["gripper"]
+    elif plane == "side":
+        sy = layout.station_y_m
+        leg = layout.leg_height_m
+        torso_base = layout.torso_base_m
+        torso_top = torso_base + layout.torso_height_m
+        head_bottom = layout.height_m - 0.0875
+        for cy, cz, w, h in (
+            (sy, 0.012, 0.145, 0.024),
+            (sy, leg / 2, 0.164, leg),
+            (sy, leg + 0.022, 0.096, 0.045),
+            (sy, (torso_base + torso_top) / 2, 0.104, layout.torso_height_m),
+            (sy, (torso_top + head_bottom) / 2, 0.030,
+             max(head_bottom - torso_top, 0.0)),
+            (sy, layout.height_m - 0.045, 0.080, 0.085),
+        ):
+            rect(cy, cz, w, h)
+        arm = [
+            (pose.shoulder_m[1], pose.shoulder_m[2]),
+            (pose.elbow_m[1], pose.elbow_m[2]),
+            (pose.hand_m[1], pose.hand_m[2]),
+        ]
+        spread = 0.006 + 0.014 * pose.grip_open
+        hy, hz = pose.hand_m[1], pose.hand_m[2]
+        gripper = [
+            ((hy - spread, hz + 0.012), (hy - spread, hz - 0.034)),
+            ((hy + spread, hz + 0.012), (hy + spread, hz - 0.034)),
+        ]
+    elif plane == "top":
+        sx, sy = layout.station_x_m, layout.station_y_m
+        for cx, cy, w, d in (
+            (sx, sy, 0.105, 0.164),
+            (sx, sy, 0.098, 0.104),
+        ):
+            painter.setPen(steel)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(
+                int(px(cx - w / 2)), int(py(cy - d / 2)),
+                max(int(w * abs(px(1.0) - px(0.0))), 2),
+                max(int(d * abs(py(0.0) - py(1.0))), 2),
+            )
+        painter.setPen(steel)
+        r = max(int(0.04 * abs(px(1.0) - px(0.0))), 3)
+        painter.drawEllipse(int(px(sx)) - r, int(py(sy)) - r, 2 * r, 2 * r)
+        arm = [
+            (pose.shoulder_m[0], pose.shoulder_m[1]),
+            (pose.elbow_m[0], pose.elbow_m[1]),
+            (pose.hand_m[0], pose.hand_m[1]),
+        ]
+        spread = 0.006 + 0.014 * pose.grip_open
+        hx, hy = pose.hand_m[0], pose.hand_m[1]
+        gripper = [
+            ((hx + 0.012, hy - spread), (hx - 0.034, hy - spread)),
+            ((hx + 0.012, hy + spread), (hx - 0.034, hy + spread)),
+        ]
+    else:
+        raise ValueError(f"unknown robot drawing plane {plane!r}")
+    painter.setPen(accent)
+    for a, b in zip(arm, arm[1:]):
+        painter.drawLine(int(px(a[0])), int(py(a[1])),
+                         int(px(b[0])), int(py(b[1])))
+    # The hand itself: a small accent node at the grasp point.
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(ACCENT))
+    hx, hy = arm[-1]
+    painter.drawEllipse(int(px(hx)) - 3, int(py(hy)) - 3, 6, 6)
+    painter.setPen(grip_pen)
+    for (x1, y1), (x2, y2) in gripper:
+        painter.drawLine(int(px(x1)), int(py(y1)), int(px(x2)), int(py(y2)))
 
 
 # ------------------------------------------------------------------ canvas
@@ -69,17 +195,24 @@ class _ProjectionView(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(220)
         self._state: MachineState | None = None
+        self._robot: RobotState | None = None
         self._params = GantryParameters()
         self._projection = "front"
         self._caption = ""
 
     def set_scene(self, state: MachineState, params: GantryParameters,
-                  projection: str, caption: str = "") -> None:
+                  projection: str, caption: str = "",
+                  robot: RobotState | None = None) -> None:
         self._state = state
         self._params = params
         self._projection = projection
         self._caption = caption
+        self._robot = robot
         self.update()
+
+    @property
+    def robot(self) -> RobotState | None:
+        return self._robot
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
         painter = QPainter(self)
@@ -95,11 +228,13 @@ class _ProjectionView(QWidget):
         w = max(self.width() - 2 * pad, 1)
         h = max(self.height() - 2 * pad - 14, 1)
         # World extents per projection, metres: (horizontal, vertical).
+        # Wide enough for the robot teacher at its station beside
+        # the machine -- it is part of the scene, never clipped.
         if self._projection == "top":
-            ext_x = (p.span_mm / 1000.0) * 1.25
-            ext_y = (p.base_depth_mm / 1000.0) * 2.2
+            ext_x = max((p.span_mm / 1000.0) * 1.25, p.span_mm / 1000.0 + 0.56)
+            ext_y = max((p.base_depth_mm / 1000.0) * 2.2, 0.85)
         else:
-            ext_x = (p.span_mm / 1000.0) * 1.25
+            ext_x = max((p.span_mm / 1000.0) * 1.25, p.span_mm / 1000.0 + 0.56)
             ext_y = (p.height_mm / 1000.0) * 1.18
         scale = min(w / ext_x, h / ext_y)
         ox = pad + (w - ext_x * scale) / 2
@@ -166,6 +301,24 @@ class _ProjectionView(QWidget):
             painter.setBrush(QColor(ACCENT))
             painter.drawEllipse(int(px(state.mass_x_m)) - 6,
                                 int(py(state.mass_z_m)) - 6, 12, 12)
+        # The robot teacher, standing at its station in the same
+        # projection -- in the fallback exactly as in the render.
+        if self._robot is not None:
+            if self._projection == "top":
+                draw_robot_figure(
+                    painter, robot_layout(p), self._robot, "top", px, py
+                )
+            elif self._projection == "side":
+                # Side projection: the canvas's horizontal axis is
+                # depth, so the figure is drawn with its depth
+                # (y) values through the same mapper.
+                draw_robot_figure(
+                    painter, robot_layout(p), self._robot, "side", px, py
+                )
+            else:
+                draw_robot_figure(
+                    painter, robot_layout(p), self._robot, "front", px, py
+                )
         painter.setPen(QColor(MUTED))
         painter.setFont(mono_font(8))
         caption = self._caption or {
@@ -246,6 +399,7 @@ class MachineViewWidget(QWidget):
         super().__init__(parent)
         self._params = GantryParameters()
         self._timeline: MachineTimeline = MachineTimeline.rest(self._params)
+        self._robot_state: RobotState | None = None
         self._time = self._timeline.start_s
         self._playing = False
         self._view = "front"
@@ -333,6 +487,13 @@ class MachineViewWidget(QWidget):
     @property
     def timeline(self) -> MachineTimeline:
         return self._timeline
+
+    @property
+    def current_robot_state(self) -> RobotState | None:
+        """The robot teacher's pose for the frame on screen --
+        the Gate probe and the tests read the performance's
+        current action from here."""
+        return self._robot_state
 
     @property
     def render_scale(self) -> float:
@@ -461,6 +622,13 @@ class MachineViewWidget(QWidget):
     def render_frame_now(self) -> None:
         """Draw the current state once, in the current view/mode."""
         state = self._timeline.state_at(self._time)
+        # The robot teacher performs with the machine: its pose
+        # for this instant comes from the same timeline, in the
+        # render and in the fallback alike.
+        try:
+            self._robot_state = self._timeline.robot_state_at(self._time)
+        except Exception:
+            self._robot_state = None
         self.time_label.setText(
             f"T {self._time - self._timeline.start_s:.1f} / "
             f"{self._timeline.duration_s:.1f} S"
@@ -472,7 +640,9 @@ class MachineViewWidget(QWidget):
             return
         renderer = self._ensure_renderer()
         if renderer is None:
-            self.canvas.set_scene(state, self._params, self._view)
+            self.canvas.set_scene(
+                state, self._params, self._view, robot=self._robot_state
+            )
             self.pages.setCurrentIndex(_PAGE_CANVAS)
             return
         try:
@@ -482,12 +652,14 @@ class MachineViewWidget(QWidget):
                     self._params, width=want[0], height=want[1]
                 )
                 renderer = self._renderer
-            frame = renderer.render(state, self._view)
+            frame = renderer.render(state, self._view, self._robot_state)
         except Exception:
             self._renderer_failed = True
             self._renderer = None
             self._refresh_mode_label()
-            self.canvas.set_scene(state, self._params, self._view)
+            self.canvas.set_scene(
+                state, self._params, self._view, robot=self._robot_state
+            )
             self.pages.setCurrentIndex(_PAGE_CANVAS)
             return
         self._adapt_scale(renderer.last_frame_ms)

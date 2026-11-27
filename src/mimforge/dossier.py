@@ -67,6 +67,74 @@ _PART_COLOURS = [
 ]
 
 
+def robot_outline_svg(params: GantryParameters) -> str:
+    """The robot teacher as a dimensioned front drawing, from the
+    shared outline geometry (``visuals.robot_outline``) -- the
+    same figure the app draws, in the document's own medium."""
+    from .visuals import robot_layout, robot_outline, robot_state_default
+
+    layout = robot_layout(params)
+    outline = robot_outline(layout, robot_state_default(params))
+    width, height = 300.0, 400.0
+    xs = [r[0] - r[2] / 2 for r in outline["rects"]]
+    xs += [r[0] + r[2] / 2 for r in outline["rects"]]
+    xs += [outline["station_x_m"] - 0.10, outline["station_x_m"] + 0.16]
+    min_x, max_x = min(xs) - 0.03, max(xs) + 0.03
+    min_y, max_y = -0.03, layout.height_m + 0.03
+    scale = min(width / (max_x - min_x), height / (max_y - min_y))
+
+    def px(v: float) -> float:
+        return (v - min_x) * scale
+
+    def py(v: float) -> float:
+        return height - (v - min_y) * scale
+
+    out = [
+        f'<svg width="{width:.0f}" height="{height:.0f}" '
+        f'viewBox="0 0 {width:.0f} {height:.0f}">',
+        f'<rect x="0" y="0" width="{width:.0f}" height="{height:.0f}" fill="#101216"/>',
+    ]
+    for cx, cz, w, h, _kind in outline["rects"]:
+        out.append(
+            f'<rect x="{px(cx - w / 2):.1f}" y="{py(cz + h / 2):.1f}" '
+            f'width="{max(w * scale, 2):.1f}" height="{max(h * scale, 2):.1f}" '
+            f'fill="none" stroke="#8a929a" stroke-width="1.6"/>'
+        )
+    vx, vz, vw, vh = outline["visor"]
+    out.append(
+        f'<rect x="{px(vx - vw / 2):.1f}" y="{py(vz + vh / 2):.1f}" '
+        f'width="{max(vw * scale, 2):.1f}" height="{max(vh * scale, 2):.1f}" '
+        f'fill="#00E5FF"/>'
+    )
+    arm = outline["arm"]
+    points = " ".join(f"{px(x):.1f},{py(z):.1f}" for x, z in arm)
+    out.append(
+        f'<polyline points="{points}" fill="none" stroke="#00E5FF" '
+        f'stroke-width="2"/>'
+    )
+    for (x1, z1), (x2, z2) in outline["gripper"]:
+        out.append(
+            f'<line x1="{px(x1):.1f}" y1="{py(z1):.1f}" x2="{px(x2):.1f}" '
+            f'y2="{py(z2):.1f}" stroke="#d94d33" stroke-width="2"/>'
+        )
+    dim_x = px(outline["station_x_m"] + 0.13)
+    out.append(
+        f'<line x1="{dim_x:.1f}" y1="{py(0):.1f}" x2="{dim_x:.1f}" '
+        f'y2="{py(layout.height_m):.1f}" stroke="#7A838D" stroke-width="1"/>'
+    )
+    out.append(
+        f'<text x="{dim_x + 6:.1f}" y="{py(layout.height_m / 2):.1f}" '
+        f'fill="#7A838D" font-size="11">'
+        f'ROBOT {layout.height_m * 1000.0:.0f} mm</text>'
+    )
+    out.append(
+        '<text x="8" y="16" fill="#7A838D" font-size="11">'
+        "ROBOT TEACHER — FRONT, AS DESIGNED</text>"
+    )
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def _projection_svg(params: GantryParameters, projection: str) -> str:
     """One orthographic drawing of the assembled machine from
     the design's own part placements -- the fallback when no GL
@@ -79,6 +147,13 @@ def _projection_svg(params: GantryParameters, projection: str) -> str:
         c, s = pl.center_mm, pl.size_mm
         xs += [c[axis[0]] - s[axis[0]] / 2, c[axis[0]] + s[axis[0]] / 2]
         ys += [c[axis[1]] - s[axis[1]] / 2, c[axis[1]] + s[axis[1]] / 2]
+    if projection == "front":
+        # The robot teacher stands in the front drawing too, at
+        # its station to the right of the frame.
+        from .visuals import robot_layout
+
+        station_mm = robot_layout(params).station_x_m * 1000.0
+        xs += [station_mm - 60, station_mm + 60]
     min_x, max_x = min(xs) - 30, max(xs) + 30
     min_y, max_y = min(ys) - 30, max(ys) + 30
     scale = min(width / (max_x - min_x), height / (max_y - min_y))
@@ -102,6 +177,32 @@ def _projection_svg(params: GantryParameters, projection: str) -> str:
             f'width="{max(s[axis[0]] * scale, 2):.1f}" '
             f'height="{max(s[axis[1]] * scale, 2):.1f}" fill="none" '
             f'stroke="{_PART_COLOURS[i % len(_PART_COLOURS)]}" stroke-width="1.6"/>'
+        )
+    if projection == "front":
+        from .visuals import (
+            robot_layout,
+            robot_outline,
+            robot_state_default,
+        )
+
+        outline = robot_outline(
+            robot_layout(params), robot_state_default(params)
+        )
+        for cx, cz, w, h, _kind in outline["rects"]:
+            out.append(
+                f'<rect x="{px(cx * 1000.0 - w * 500.0):.1f}" '
+                f'y="{py(cz * 1000.0 + h * 500.0):.1f}" '
+                f'width="{max(w * 1000.0 * scale, 2):.1f}" '
+                f'height="{max(h * 1000.0 * scale, 2):.1f}" fill="none" '
+                f'stroke="#8a929a" stroke-width="1.6"/>'
+            )
+        points = " ".join(
+            f"{px(x * 1000.0):.1f},{py(z * 1000.0):.1f}"
+            for x, z in outline["arm"]
+        )
+        out.append(
+            f'<polyline points="{points}" fill="none" stroke="#00E5FF" '
+            f'stroke-width="2"/>'
         )
     out.append(
         f'<text x="8" y="16" fill="#7A838D" font-size="11">'
@@ -186,13 +287,16 @@ def machine_image_data_uris(
                     params, width=640, height=480
                 )
                 try:
-                    state = visuals.MachineTimeline.rest(
-                        params
-                    ).state_at(0.0)
+                    timeline = visuals.MachineTimeline.rest(params)
+                    state = timeline.state_at(0.0)
+                    # At rest the robot holds the load at its
+                    # gate -- the dossier's pictures show the
+                    # teaching machine whole: apparatus + robot.
+                    robot = timeline.robot_state_at(0.0)
                     import cv2
 
                     for view in ("front", "side", "top"):
-                        frame = renderer.render(state, view)
+                        frame = renderer.render(state, view, robot)
                         ok, buf = cv2.imencode(
                             ".png",
                             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
@@ -401,6 +505,7 @@ def build_dossier_html(
         for key in ("front", "side", "top", "internals")
         if key in images
     )
+    robot_svg = robot_outline_svg(params)
     low, high = params.suspension_range_mm
     dims = (
         f"SPAN {params.span_mm:.0f} mm · HEIGHT {params.height_mm:.0f} mm · "
@@ -428,6 +533,13 @@ def build_dossier_html(
 <p>The machine complete: outside from the front, the side and above, and
 taken apart inside — every part the materials list names, drawn from the
 same design the app builds.</p>
+<h2>THE ROBOT TEACHER</h2>
+<div class="views"><figure>{robot_svg}<figcaption>ROBOT — FRONT ELEVATION</figcaption></figure></div>
+<p>The robot stands at the machine's right-front corner and performs
+the practical with the class: it holds the load, releases it, points
+to the reference position while readings are taken, and works the
+carriage for each adjustment — the same figure the app shows
+performing in Playback and Simulate, drawn here to scale.</p>
 <h2>WHAT IT DOES</h2>
 <p>{_esc(description)}</p>
 <p>{_esc(outcome_spec)}</p>

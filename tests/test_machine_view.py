@@ -106,16 +106,21 @@ def test_part_layout_matches_the_cad_part_set():
         assert part.exploded_center_mm != part.center_mm
 
 
-def test_render_model_has_the_four_actuated_axes():
+def test_render_model_has_the_machine_and_robot_axes():
     mujoco = pytest.importorskip("mujoco")
     xml = visuals.build_render_xml(PARAMS, length_m=0.9)
     model = mujoco.MjModel.from_xml_string(xml)
-    assert model.nq == 4  # carriage, spool, gate, swing
+    # The machine's four actuated axes, then the robot teacher's
+    # four (Stage 4 full pass): yaw, shoulder, elbow, grip.
+    assert model.nq == 8
     names = [
         mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i)
         for i in range(model.njnt)
     ]
-    assert names == ["carriage_x", "spool_rot", "gate_x", "swing"]
+    assert names == [
+        "carriage_x", "spool_rot", "gate_x", "swing",
+        "robot_yaw", "robot_shoulder", "robot_elbow", "robot_grip",
+    ]
 
 
 # --------------------------------------------------------------- renderer

@@ -679,7 +679,45 @@ class LessonPlayer(QWidget):
                 timeline.label = replay.label
         except Exception:
             timeline = MachineTimeline.rest(params)
+        self._attach_action_segments(timeline, lesson)
         self.machine_view.set_timeline(timeline)
+
+    @staticmethod
+    def _attach_action_segments(timeline, lesson: LessonPackage) -> None:
+        """The robot teacher's cue sheet for this lesson.
+
+        The machine clock is the lesson clock (each step owns an
+        equal share of the track), so the cue sheet is written in
+        the same shares: a step's share is split equally among
+        its motion primitives, each mapped to the robot action it
+        calls for; a step with no primitives leaves the robot
+        standing watch while the narration covers it. Lessons
+        whose steps carry no primitives at all get no cue sheet
+        -- the timeline's own release then governs the robot."""
+        from ..visuals import robot_action_for_primitive
+
+        steps = lesson.steps
+        if not steps or not any(s.motion_primitives for s in steps):
+            return
+        start = timeline.start_s
+        duration = timeline.duration_s
+        if duration <= 0:
+            return
+        segments = []
+        share = duration / len(steps)
+        for i, step in enumerate(steps):
+            step_start = start + i * share
+            primitives = step.motion_primitives or ["watch"]
+            sub = share / len(primitives)
+            for j, primitive in enumerate(primitives):
+                segments.append(
+                    (
+                        step_start + j * sub,
+                        step_start + (j + 1) * sub,
+                        robot_action_for_primitive(primitive),
+                    )
+                )
+        timeline.action_segments = segments
 
     # ------------------------------------------------- machine sync
 

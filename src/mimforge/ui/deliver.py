@@ -11,6 +11,7 @@ the dialogs.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -21,7 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .main_window import ACCENT, MUTED, TEXT, mono_font
+from .icons import make_icon
+from .main_window import ACCENT, MUTED, TEXT, mono_font, prose_font
 
 
 def _plate(text: str) -> QLabel:
@@ -63,7 +65,10 @@ class DeliverPanel(QWidget):
             )
         )
         self.assessment_view = QPlainTextEdit()
-        self.assessment_view.setFont(mono_font(10))
+        # The assessment is prose a teacher reads and signs --
+        # the grotesque, per the type audit. The code view and
+        # every readout on this panel stay mono.
+        self.assessment_view.setFont(prose_font(10))
         self.assessment_view.setReadOnly(True)
         self.assessment_view.setPlainText("No project open.")
         layout.addWidget(self.assessment_view, stretch=1)
@@ -76,11 +81,15 @@ class DeliverPanel(QWidget):
         sign_row.addWidget(self.teacher_edit, stretch=1)
         self.sign_button = QPushButton("✎  SIGN THE ASSESSMENT")
         self.sign_button.setFont(mono_font(10, bold=True))
+        self.sign_button.setIcon(make_icon("sign", 18))
+        self.sign_button.setIconSize(QSize(18, 18))
         self.sign_button.clicked.connect(self._on_sign)
         sign_row.addWidget(self.sign_button)
         layout.addLayout(sign_row)
         self.export_button = QPushButton("⬆  EXPORT SIGNED PACKAGE")
         self.export_button.setFont(mono_font(11, bold=True))
+        self.export_button.setIcon(make_icon("export", 20))
+        self.export_button.setIconSize(QSize(20, 20))
         self.export_button.clicked.connect(
             lambda: self.host.export_package()
         )
@@ -89,6 +98,8 @@ class DeliverPanel(QWidget):
             "⬆  EXPORT PRODUCTION DOCUMENT"
         )
         self.production_button.setFont(mono_font(11, bold=True))
+        self.production_button.setIcon(make_icon("doc", 20))
+        self.production_button.setIconSize(QSize(20, 20))
         self.production_button.clicked.connect(
             lambda: self.host.export_production_document()
         )
@@ -99,6 +110,8 @@ class DeliverPanel(QWidget):
         )
         self.generate_button = QPushButton("⚙  GENERATE CONTROLLER CODE")
         self.generate_button.setFont(mono_font(10, bold=True))
+        self.generate_button.setIcon(make_icon("gear", 18))
+        self.generate_button.setIconSize(QSize(18, 18))
         self.generate_button.clicked.connect(
             lambda: self.host.generate_code()
         )

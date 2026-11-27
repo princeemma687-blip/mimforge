@@ -19,7 +19,7 @@ tests walk the whole build without waiting on the timer.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from ..assembly import AssemblyPlan
 from ..visuals import part_layout
+from .icons import make_icon
 from .main_window import ACCENT, MUTED, TEXT, mono_font
 from .motion import motion_enabled
 
@@ -100,8 +101,15 @@ class AssemblyCanvas(QWidget):
         pad = 26
         span = plan.params.span_mm
         height = plan.params.height_mm + plan.params.section_mm
+        # The world is wide enough for the robot teacher at its
+        # station: it stands by the build, watching the coupling
+        # it will later perform.
+        from ..visuals import robot_layout, robot_state_default
+
+        robot = robot_layout(plan.params)
+        world_half_mm = max(span * 0.65, robot.station_x_m * 1000.0 + 130.0)
         scale = min(
-            (self.width() - 2 * pad) / (span * 1.3),
+            (self.width() - 2 * pad) / (2 * world_half_mm),
             (self.height() - 2 * pad) / (height * 1.25),
         )
 
@@ -144,6 +152,18 @@ class AssemblyCanvas(QWidget):
                 if self._progress >= 1.0:
                     self._draw_fasteners(painter, px, py, cx, cz, sw, sh)
             # Future parts are absent: the machine is not built yet.
+        from .machine_view import draw_robot_figure
+
+        def robot_px(v_m: float) -> float:
+            return self.width() / 2 + v_m * 1000.0 * scale
+
+        def robot_py(v_m: float) -> float:
+            return self.height() - pad - v_m * 1000.0 * scale
+
+        draw_robot_figure(
+            painter, robot, robot_state_default(plan.params),
+            "front", robot_px, robot_py,
+        )
         painter.setPen(QColor(MUTED))
         painter.setFont(mono_font(8))
         painter.drawText(
@@ -201,6 +221,8 @@ class AssemblyPlayer(QWidget):
         header.addStretch(1)
         self.back_button = QPushButton("◀  BACK TO DESIGN")
         self.back_button.setFont(mono_font(10, bold=True))
+        self.back_button.setIcon(make_icon("back", 18))
+        self.back_button.setIconSize(QSize(18, 18))
         self.back_button.clicked.connect(self._on_back)
         header.addWidget(self.back_button)
         layout.addLayout(header)
@@ -249,11 +271,16 @@ class AssemblyPlayer(QWidget):
         self.pause_button = QPushButton("❚❚  PAUSE")
         self.next_button = QPushButton("NEXT  ▶")
         self.reset_button = QPushButton("■  RESET")
-        for button in (
-            self.prev_button, self.play_button, self.pause_button,
-            self.next_button, self.reset_button,
+        for button, icon_name in (
+            (self.prev_button, "prev"),
+            (self.play_button, "play"),
+            (self.pause_button, "pause"),
+            (self.next_button, "next"),
+            (self.reset_button, "reset"),
         ):
             button.setFont(mono_font(10, bold=True))
+            button.setIcon(make_icon(icon_name, 18))
+            button.setIconSize(QSize(18, 18))
             controls.addWidget(button)
         self.prev_button.clicked.connect(self.prev_step)
         self.play_button.clicked.connect(self.play)
@@ -436,6 +463,14 @@ class AssemblyPlayer(QWidget):
             return
         dt = 0.033
         if self._animating:
+            if not motion_enabled():
+                # Motion reduced mid-flight: the part is simply
+                # in place -- the end state never waits on motion.
+                self._progress = 1.0
+                self._animating = False
+                self._hold_elapsed = 0.0
+                self._refresh()
+                return
             self._progress = min(1.0, self._progress + dt / _ANIM_S)
             if self._progress >= 1.0:
                 self._animating = False

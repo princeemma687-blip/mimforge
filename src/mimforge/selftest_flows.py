@@ -334,6 +334,7 @@ def _run(results, resources, require_bundled: bool) -> None:
         results.append(("load Firebase config", False, f"{type(exc).__name__}: {exc}"))
 
     _probe_machine_view(results)
+    _probe_robot_teacher(results)
     _probe_narration(results)
     _probe_assembly(results)
     _probe_library(results)
@@ -492,6 +493,131 @@ def _probe_machine_view(results) -> None:
     except Exception as exc:  # noqa: BLE001
         results.append(
             ("machine view render", False, f"{type(exc).__name__}: {exc}")
+        )
+
+
+def _robot_frame_delta(with_robot, without_robot) -> tuple[int, float]:
+    """How much of a frame the robot accounts for: the count of
+    differing pixels between the same scene rendered with and
+    without it, and the mean x of the difference as a fraction of
+    the frame width (the robot stands on the right in front
+    view). Zero when the robot is not really in the picture --
+    the negative control this probe is built on."""
+    import numpy as np
+
+    diff = np.any(with_robot != without_robot, axis=2)
+    count = int(diff.sum())
+    if count == 0:
+        return 0, 0.0
+    columns = np.nonzero(diff.any(axis=0))[0]
+    return count, float(columns.mean()) / with_robot.shape[1]
+
+
+def _robot_render_check(make_renderer) -> tuple[bool, str]:
+    """A/B proof that the robot teacher renders: the same states
+    rendered with and without it must differ materially in all
+    three views, the difference must sit on the robot's side in
+    front view, and a holding pose must picture differently from
+    a pointing pose. ``make_renderer(show_robot)`` builds the
+    renderer under test -- a factory that ignores the flag (the
+    robot secretly absent, or secretly unhidable) fails here,
+    which is the probe's negative control."""
+    from . import visuals
+    from .design import GantryParameters
+
+    params = GantryParameters()
+    timeline = visuals.MachineTimeline.rest(params)
+    state = timeline.state_at(0.0)
+    hold = timeline.robot_state_at(0.0)
+    layout = visuals.robot_layout(params)
+    point = visuals.solve_robot_pose(
+        layout,
+        (state.carriage_x_m, 0.0, state.pivot_z_m - state.length_m),
+        0.2,
+        "point",
+    )
+    shown = make_renderer(True)
+    hidden = make_renderer(False)
+    try:
+        details = []
+        ok = hold.action == "hold" and hold.grip_open == 0.0
+        for view in ("front", "side", "top"):
+            with_r = shown.render(state, view, hold)
+            without_r = hidden.render(state, view, hold)
+            count, centroid = _robot_frame_delta(with_r, without_r)
+            view_ok = count > 200
+            if view == "front":
+                view_ok = view_ok and centroid > 0.5
+            ok = ok and view_ok
+            details.append(f"{view} Δ{count}px@{centroid:.2f}")
+        pose_a = shown.render(state, "front", hold)
+        pose_b = shown.render(state, "front", point)
+        pose_delta, _c = _robot_frame_delta(pose_a, pose_b)
+        ok = ok and pose_delta > 50
+        details.append(f"hold-vs-point Δ{pose_delta}px")
+        return ok, "; ".join(details)
+    finally:
+        shown.close()
+        hidden.close()
+
+
+def _probe_robot_teacher(results) -> None:
+    """Stage 4 full-pass Gate v2 probe: the robot teacher is in
+    the picture -- rendered in all three views when a GL backend
+    exists (A/B against a robot-less render of the same scene),
+    and drawn by the canvas fallback when it does not. A build
+    whose robot silently vanished fails this probe."""
+    try:
+        from . import visuals
+        from .design import GantryParameters
+
+        params = GantryParameters()
+        if visuals.renderer_available():
+            def make(show_robot: bool):
+                return visuals.MachineRenderer(
+                    params, width=320, height=240, show_robot=show_robot
+                )
+
+            ok, detail = _robot_render_check(make)
+            results.append(("robot teacher render", ok, detail))
+        else:
+            results.append(
+                (
+                    "robot teacher render",
+                    True,
+                    "renderer unavailable here -- fallback path probed below",
+                )
+            )
+        # The fallback must carry the robot too: pose computed,
+        # canvas scene holding it.
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is not None:
+            from .ui.machine_view import MachineViewWidget
+
+            widget = MachineViewWidget(force_fallback=True)
+            timeline = visuals.MachineTimeline.rest(params)
+            widget.set_timeline(timeline, "PROBE")
+            widget.render_frame_now()
+            pose = widget.current_robot_state
+            ok = (
+                pose is not None
+                and pose.action == "hold"
+                and widget.canvas.robot is pose
+            )
+            results.append(
+                (
+                    "robot teacher fallback",
+                    ok,
+                    "canvas scene carries the holding robot"
+                    if ok
+                    else f"canvas robot state: {pose!r}",
+                )
+            )
+            widget.close()
+    except Exception as exc:  # noqa: BLE001
+        results.append(
+            ("robot teacher render", False, f"{type(exc).__name__}: {exc}")
         )
 
 
