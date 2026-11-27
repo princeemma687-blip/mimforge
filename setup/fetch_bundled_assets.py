@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -50,6 +51,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -144,13 +146,79 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+# ------------------------------------------------------------ downloads
+#
+# Every fetch below goes through download(), and download() retries.
+# Packaging runs unattended on CI runners and home machines whose
+# networks drop connections: CI run 46023544376 died at this staging
+# step when a single unretried urlopen hit a connect timeout
+# (WinError 10060, ~24 s in) and the raw URLError killed the build
+# before the test suite ever ran. Retrying is safe here because
+# every asset is verified afterwards against its SHA-256 pin (or
+# recorded in the manifest), exactly as before -- a download that
+# eventually succeeds is held to the identical standard, and one
+# that never succeeds aborts the fetch with a clear message.
+
+DOWNLOAD_ATTEMPTS = 4
+# Per-attempt socket timeout, unchanged from the original fetch:
+# generous enough for the largest assets (~130 MB SAM weights,
+# ~90 MB Kokoro model) on a slow runner. The failures retries cure
+# are connect/read drops, which surface long before this.
+DOWNLOAD_TIMEOUT = 300
+# Slept between attempts: attempt 1 -> 5 s, 2 -> 15 s, 3 -> 45 s.
+DOWNLOAD_BACKOFFS = (5, 15, 45)
+
+# Transient transport failures worth another attempt. URLError,
+# TimeoutError and the connection errors are all OSError subclasses;
+# http.client.HTTPException covers the rest of the family --
+# IncompleteRead (body cut short) and RemoteDisconnected -- which
+# OSError does not.
+_RETRYABLE_DOWNLOAD_ERRORS = (OSError, http.client.HTTPException)
+
+
+def _sleep(seconds: float) -> None:
+    """Backoff seam: the tests patch this so the suite stays fast."""
+    time.sleep(seconds)
+
+
 def download(url: str, dest: Path) -> None:
+    """Download ``url`` to ``dest``, retrying transient failures.
+
+    Up to DOWNLOAD_ATTEMPTS attempts with exponential backoff. If
+    every attempt fails, the partial file is removed -- so a later
+    run re-downloads instead of tripping over the fragment -- and a
+    SystemExit names the asset and the URL.
+    """
     request = urllib.request.Request(
         url, headers={"User-Agent": "mimforge-packaging"}
     )
-    with urllib.request.urlopen(request, timeout=300) as response:
-        with dest.open("wb") as out:
-            shutil.copyfileobj(response, out, length=1 << 20)
+    last_error: BaseException | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(
+                request, timeout=DOWNLOAD_TIMEOUT
+            ) as response:
+                with dest.open("wb") as out:
+                    shutil.copyfileobj(response, out, length=1 << 20)
+            return
+        except _RETRYABLE_DOWNLOAD_ERRORS as exc:
+            last_error = exc
+            if attempt < DOWNLOAD_ATTEMPTS:
+                delay = DOWNLOAD_BACKOFFS[attempt - 1]
+                print(
+                    f"  download of {dest.name} failed "
+                    f"(attempt {attempt}/{DOWNLOAD_ATTEMPTS}): {exc}\n"
+                    f"  retrying in {delay}s ..."
+                )
+                _sleep(delay)
+    dest.unlink(missing_ok=True)
+    raise SystemExit(
+        f"download of {dest.name} failed after "
+        f"{DOWNLOAD_ATTEMPTS} attempts.\n"
+        f"  url: {url}\n"
+        f"  last error: {last_error}\n"
+        "Check the network connection and re-run the fetch."
+    )
 
 
 # ------------------------------------------------------------ ffmpeg
